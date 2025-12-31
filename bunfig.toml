@@ -1,0 +1,3 @@
+[install]
+# Использовать копирование файлов вместо symlinks (необходимо для Windows)
+backend = "copyfile"

@@ -1,0 +1,8 @@
+{
+  "serverUrl": "http://your-server-url:3004",
+  "hostname": "your-hostname",
+  "authKey": "your-auth-key-from-delivery-hosts-json",
+  "localStorageDir": "./downloads",
+  "logFile": "./logs/client.log",
+  "silentMode": false
+}

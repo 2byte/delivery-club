@@ -1,0 +1,23 @@
+node_modules/
+.bun/
+dist/
+build/
+*.log
+.DS_Store
+
+# Client-specific files
+client.config.json
+downloads/
+logs/
+local_downloads/
+
+# Build outputs
+client
+client.exe
+
+# Sync state
+.sync_state.json
+
+# Storage directories
+storage/
+files/
