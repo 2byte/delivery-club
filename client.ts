@@ -43,8 +43,14 @@ class Logger {
         
         // Ensure log directory exists
         const logDir = dirname(logFile);
-        if (!existsSync(logDir)) {
+        const isCurrentDir = logDir === '.' || logDir === './' || logDir === '';
+        
+        if (!existsSync(logDir) && !isCurrentDir) {
+            try {
             mkdirSync(logDir, { recursive: true });
+            } catch (error) {
+                throw new Error(`Failed to create log directory ${logDir} for log file: ${error}`);
+            }
         }
     }
 
@@ -139,7 +145,11 @@ class SoftDeliveryClient {
 
         // Ensure directories exist
         if (!existsSync(this.config.localStorageDir)) {
+            try {
             mkdirSync(this.config.localStorageDir, { recursive: true });
+            } catch (error) {
+                throw new Error(`Failed to create local storage directory: ${error}`);
+            }
         }
 
         this.logger.info('Client initialized');
@@ -265,7 +275,7 @@ class SoftDeliveryClient {
                 return false;
             }
         } catch (error) {
-            this.logger.error(`Push error: ${error}`);
+            this.logger.error(`Push error: server url ${this.config.serverUrl} - ${error}`);
             return false;
         }
     }
@@ -356,7 +366,11 @@ class SoftDeliveryClient {
                                 // Ensure directory exists
                                 const fileDir = dirname(extractPath);
                                 if (!existsSync(fileDir)) {
-                                    mkdirSync(fileDir, { recursive: true });
+                                    try {
+                                        mkdirSync(fileDir, { recursive: true });
+                                    } catch (error) {
+                                        throw new Error(`Failed to create directory for extracted file: ${error}`);
+                                    }
                                 }
                                 
                                 writeFileSync(extractPath, fileData);

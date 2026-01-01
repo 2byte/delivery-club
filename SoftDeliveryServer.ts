@@ -311,8 +311,8 @@ export class SoftDeliveryServer extends Server {
     private hostManager: SoftDeliveryHost;
     private fileManager: DeliveryFile;
 
-    constructor(private config: {port: number}) {
-        super({ port: config.port });
+    constructor(private config: {hostname: string, port: number}) {
+        super({ hostname: config.hostname, port: config.port });
         this.hostManager = new SoftDeliveryHost();
         this.fileManager = new DeliveryFile();
     }
