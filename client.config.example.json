@@ -3,6 +3,6 @@
   "hostname": "your-hostname",
   "authKey": "your-auth-key-from-delivery-hosts-json",
   "localStorageDir": "./downloads",
-  "logFile": "./logs/client.log",
-  "silentMode": false
+  "logFile": "./client.log",
+  "silentMode": true
 }
