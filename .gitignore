@@ -11,6 +11,7 @@ client.config.json
 downloads/
 logs/
 local_downloads/
+test-deploy/
 
 # Build outputs
 client

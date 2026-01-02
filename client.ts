@@ -260,6 +260,7 @@ class SoftDeliveryClient {
                     'X-Auth-Key': this.config.authKey,
                 },
                 body: formData,
+                verbose: this.config.silentMode ? false : true,
             });
             
             const result = await response.json();
