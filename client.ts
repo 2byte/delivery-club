@@ -20,6 +20,12 @@ interface ClientConfig {
     localStorageDir: string;
     logFile: string;
     silentMode: boolean;
+    hooks?: {
+        onDownloadName?: {
+            name: string;
+            extractTo: string;
+        };
+    };
 }
 
 /**
@@ -155,6 +161,31 @@ class SoftDeliveryClient {
         this.logger.info('Client initialized');
         this.logger.info(`Server: ${this.config.serverUrl}`);
         this.logger.info(`Hostname: ${this.config.hostname}`);
+    }
+
+    /**
+     * Create directory if it doesn't exist
+     */
+    private ensureDirectoryExists(dirPath: string): void {
+        if (!existsSync(dirPath)) {
+            try {
+                mkdirSync(dirPath, { recursive: true });
+            } catch (error) {
+                this.logger.error(`Failed to create directory ${dirPath}: ${error}`);
+                throw new Error(`Failed to create directory ${dirPath}: ${error}`);
+            }
+        }
+    }
+
+    private extractDirFromHooks(filename: string): string | null {
+        if (this.config.hooks && this.config.hooks.onDownloadName) {
+            const hook = this.config.hooks.onDownloadName;
+
+            if (hook.name === filename) {
+                return hook.extractTo;
+            }
+        }
+        return null;
     }
 
     /**
@@ -362,7 +393,13 @@ class SoftDeliveryClient {
                         for (const [relativePath, zipEntry] of Object.entries(zipData.files)) {
                             if (!zipEntry.dir) {
                                 const fileData = await zipEntry.async('nodebuffer');
-                                const extractPath = join(this.config.localStorageDir, relativePath);
+                                let extractPath = join(this.config.localStorageDir, relativePath);
+                                
+                                // Check for hooks to override extraction path
+                                const hookExtractDir = this.extractDirFromHooks(fileInfo.originalName);
+                                if (hookExtractDir) {
+                                    extractPath = join(hookExtractDir, relativePath);
+                                }
                                 
                                 // Ensure directory exists
                                 const fileDir = dirname(extractPath);

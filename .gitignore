@@ -8,10 +8,12 @@ build/
 
 # Client-specific files
 client.config.json
+client.config.osnova.json
 downloads/
 logs/
 local_downloads/
 test-deploy/
+test_files/
 
 # Build outputs
 client

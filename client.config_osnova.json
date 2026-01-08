@@ -1,0 +1,8 @@
+{
+  "serverUrl": "http://65.21.88.230:8002",
+  "hostname": "user1",
+  "authKey": "CatchMeIfYouCan123",
+  "localStorageDir": "./downloads",
+  "logFile": "./client.log",
+  "silentMode": false
+}
