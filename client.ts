@@ -251,8 +251,9 @@ class SoftDeliveryClient {
   /**
    * Push file or directory to server
    */
-  async push(filePath: string, customFilename?: string, share: boolean = false): Promise<boolean> {
-    this.logger.info(`Starting push: ${filePath}${share ? " (shared mode)" : ""}`);
+  async push(filePath: string, customFilename?: string, share: boolean = false, targetHostname?: string): Promise<boolean> {
+    const targetHost = targetHostname || this.config.hostname;
+    this.logger.info(`Starting push: ${filePath}${share ? " (shared mode)" : ""}${targetHostname ? ` to host: ${targetHostname}` : ""}`);
 
     try {
       let fileData: Buffer;
@@ -297,7 +298,7 @@ class SoftDeliveryClient {
       const response = await fetch(`${this.config.serverUrl}/push`, {
         method: "POST",
         headers: {
-          "X-Host-Name": this.config.hostname,
+          "X-Host-Name": targetHost,
           "X-Auth-Key": this.config.authKey,
         },
         body: formData,
@@ -548,6 +549,7 @@ Commands:
   status              Check server status
   push <path>         Push file or directory to server
   push <path> --share Share file with other hosts (available for pull)
+  push <path> --target-host <hostname>  Push to specific host
   pull                Pull new files from server (git-style)
   list [for|from]     List files on server
   sync-status         Show local sync status
@@ -560,6 +562,7 @@ Examples:
   bun client.ts push ./myfile.txt
   bun client.ts push ./myfolder        # Will zip directory
   bun client.ts push ./myfile.txt --share  # Share with other hosts
+  bun client.ts push ./myfile.txt --target-host host_2  # Push to host_2
   bun client.ts pull
   bun client.ts sync-status
         `);
@@ -576,12 +579,14 @@ Examples:
 
       case "push":
         if (args.length < 2) {
-          console.error("❌ Usage: push <filepath> [--share]");
+          console.error("❌ Usage: push <filepath> [--share] [--target-host <hostname>]");
           process.exit(1);
         }
         const share = args.includes("--share");
+        const targetHostIndex = args.indexOf("--target-host");
+        const targetHost = targetHostIndex !== -1 && args[targetHostIndex + 1] ? args[targetHostIndex + 1] : undefined;
         const filename = args[2] && !args[2].startsWith("--") ? args[2] : undefined;
-        await client.push(args[1], filename, share);
+        await client.push(args[1], filename, share, targetHost);
         break;
 
       case "pull":

@@ -389,24 +389,29 @@ export class SoftDeliveryServer extends Server {
                 // Decrypt file using host's key
                 const decryptedData = EncryptionUtils.decrypt(fileData, auth.host.key);
 
+                // Determine target host - use X-Host-Name header as target
+                // auth.hostId comes from X-Host-Name, which now can be the target host
+                const targetHostId = auth.hostId;
+                const targetHostname = auth.host.hostname;
+
                 // Save decrypted file - choose directory based on share flag
                 let metadata: FileMetadata;
                 if (share) {
                     // Save to files_for_hosts so other hosts can pull it
                     metadata = this.fileManager.saveFileForHost(
-                        auth.hostId,
+                        targetHostId,
                         filename,
                         decryptedData
                     );
-                    console.log(`[PUSH] Shared ${isDirectory ? 'directory' : 'file'} from ${auth.host.hostname}: ${filename} (${metadata.size} bytes) - available for pull`);
+                    console.log(`[PUSH] Shared ${isDirectory ? 'directory' : 'file'} for ${targetHostname}: ${filename} (${metadata.size} bytes) - available for pull`);
                 } else {
                     // Save to files_from_hosts (default behavior)
                     metadata = this.fileManager.saveFileFromHost(
-                        auth.hostId,
+                        targetHostId,
                         filename,
                         decryptedData
                     );
-                    console.log(`[PUSH] Received ${isDirectory ? 'directory' : 'file'} from ${auth.host.hostname}: ${filename} (${metadata.size} bytes)`);
+                    console.log(`[PUSH] Received ${isDirectory ? 'directory' : 'file'} for ${targetHostname}: ${filename} (${metadata.size} bytes)`);
                 }
                 
                 metadata.isDirectory = isDirectory;
