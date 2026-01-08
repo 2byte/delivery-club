@@ -15,9 +15,10 @@ import {
   readdirSync,
   lstatSync,
   appendFileSync,
+  rmSync,
 } from "fs";
 import { join, basename, dirname } from "path";
-import JSZip from "jszip";
+import { spawnSync } from "child_process";
 
 /**
  * Client configuration interface
@@ -216,36 +217,37 @@ class SoftDeliveryClient {
   }
 
   /**
-   * Create zip archive from directory
+   * Create zip archive from directory using PowerShell
    */
-  private async createZipFromDirectory(dirPath: string): Promise<Buffer> {
-    const zip = new JSZip();
+  private createZipFromDirectory(dirPath: string): Buffer {
+    const tempZipPath = join(dirname(dirPath), `temp_${Date.now()}.zip`);
 
-    const addToZip = (currentPath: string, zipFolder: JSZip | null = null) => {
-      const items = readdirSync(currentPath);
+    try {
+      // Use PowerShell Compress-Archive to create zip
+      const psCommand = `Compress-Archive -Path "${dirPath}\\*" -DestinationPath "${tempZipPath}" -Force`;
+      const result = spawnSync('powershell.exe', ['-Command', psCommand], {
+        encoding: 'utf-8',
+        windowsHide: true,
+      });
 
-      for (const item of items) {
-        const fullPath = join(currentPath, item);
-        const itemStats = lstatSync(fullPath);
-
-        if (itemStats.isDirectory()) {
-          const folder = zipFolder ? zipFolder.folder(item) : zip.folder(item);
-          if (folder) {
-            addToZip(fullPath, folder);
-          }
-        } else if (itemStats.isFile()) {
-          const fileContent = readFileSync(fullPath);
-          if (zipFolder) {
-            zipFolder.file(item, fileContent);
-          } else {
-            zip.file(item, fileContent);
-          }
-        }
+      if (result.error || result.status !== 0) {
+        throw new Error(`Failed to create zip: ${result.stderr || result.error}`);
       }
-    };
 
-    addToZip(dirPath);
-    return Buffer.from(await zip.generateAsync({ type: "nodebuffer" }));
+      // Read the created zip file
+      const zipData = readFileSync(tempZipPath);
+
+      // Clean up temp file
+      rmSync(tempZipPath, { force: true });
+
+      return zipData;
+    } catch (error) {
+      // Clean up temp file if it exists
+      if (existsSync(tempZipPath)) {
+        rmSync(tempZipPath, { force: true });
+      }
+      throw error;
+    }
   }
 
   /**
@@ -269,7 +271,7 @@ class SoftDeliveryClient {
           isDirectory = true;
 
           // Create zip from directory
-          fileData = await this.createZipFromDirectory(filePath);
+          fileData = this.createZipFromDirectory(filePath);
           filename = customFilename || `${basename(filePath)}.zip`;
           this.logger.info(`Zip created: ${fileData.length} bytes`);
         } else {
@@ -391,44 +393,38 @@ class SoftDeliveryClient {
         const isZipFile = fileInfo.originalName.toLowerCase().endsWith(".zip");
 
         if (isZipFile) {
-          // Unzip the archive
+          // Unzip the archive using PowerShell
           this.logger.info(`Detected ZIP archive, extracting...`);
 
           try {
-            const zip = new JSZip();
-            const zipData = await zip.loadAsync(decryptedData);
+            // Save decrypted data to temp zip file
+            const tempZipPath = join(this.config.localStorageDir, `temp_${Date.now()}.zip`);
+            writeFileSync(tempZipPath, decryptedData);
 
-            let extractedCount = 0;
+            // Determine extraction path
+            const hookExtractDir = this.extractDirFromHooks(fileInfo.originalName);
+            const extractPath = hookExtractDir || this.config.localStorageDir;
 
-            // Extract all files from zip
-            for (const [relativePath, zipEntry] of Object.entries(zipData.files)) {
-              if (!zipEntry.dir) {
-                const fileData = await zipEntry.async("nodebuffer");
-                let extractPath = join(this.config.localStorageDir, relativePath);
-
-                // Check for hooks to override extraction path
-                const hookExtractDir = this.extractDirFromHooks(fileInfo.originalName);
-                if (hookExtractDir) {
-                  extractPath = join(hookExtractDir, relativePath);
-                }
-
-                // Ensure directory exists
-                const fileDir = dirname(extractPath);
-                if (!existsSync(fileDir)) {
-                  try {
-                    mkdirSync(fileDir, { recursive: true });
-                  } catch (error) {
-                    throw new Error(`Failed to create directory for extracted file: ${error}`);
-                  }
-                }
-
-                writeFileSync(extractPath, fileData);
-                extractedCount++;
-                this.logger.info(`  Extracted: ${relativePath}`);
-              }
+            // Ensure extraction directory exists
+            if (!existsSync(extractPath)) {
+              mkdirSync(extractPath, { recursive: true });
             }
 
-            this.logger.success(`Extracted ${extractedCount} files from ${fileInfo.originalName}`);
+            // Use PowerShell Expand-Archive to extract
+            const psCommand = `Expand-Archive -Path "${tempZipPath}" -DestinationPath "${extractPath}" -Force`;
+            const result = spawnSync('powershell.exe', ['-Command', psCommand], {
+              encoding: 'utf-8',
+              windowsHide: true,
+            });
+
+            // Clean up temp zip file
+            rmSync(tempZipPath, { force: true });
+
+            if (result.error || result.status !== 0) {
+              throw new Error(`PowerShell extract failed: ${result.stderr || result.error}`);
+            }
+
+            this.logger.success(`Extracted files from ${fileInfo.originalName} to ${extractPath}`);
           } catch (error) {
             this.logger.error(`Failed to extract ZIP: ${error}`);
             // Fallback: save as regular file
