@@ -80,6 +80,40 @@ export class SoftDeliveryHost {
 }
 
 /**
+ * File hooks interface (imported from client)
+ */
+interface ClientFileHooks {
+  onDownloadName?: {
+    name: string;
+    extractTo: string;
+  };
+  moves?: {
+    byNames?: { [key: string]: string };
+  };
+}
+
+/**
+ * Pull request body interface
+ */
+interface PullRequestBody {
+  clientFiles: string[];
+}
+
+/**
+ * Download request body interface
+ */
+interface DownloadRequestBody {
+  storedName: string;
+}
+
+/**
+ * Files list request body interface
+ */
+interface FilesRequestBody {
+  direction?: "for" | "from";
+}
+
+/**
  * File metadata interface
  */
 interface FileMetadata {
@@ -91,6 +125,7 @@ interface FileMetadata {
   encrypted: boolean;
   isDirectory?: boolean;
   checksum?: string;
+  hooks?: ClientFileHooks;
 }
 
 /**
@@ -128,11 +163,17 @@ export class DeliveryFile {
   /**
    * Save file received from host (push)
    */
-  saveFileFromHost(hostId: string, filename: string, data: Buffer): FileMetadata {
+  saveFileFromHost(hostId: string, filename: string, data: Buffer, hooks?: ClientFileHooks): FileMetadata {
     const storedName = this.generateStorageFilename(hostId, filename);
     const filePath = join(DeliveryFile.FILES_FROM_HOSTS_DIR, storedName);
 
     writeFileSync(filePath, data);
+
+    // Save hooks as separate JSON file if provided
+    if (hooks) {
+      const hooksFilePath = `${filePath}.hooks.json`;
+      writeFileSync(hooksFilePath, JSON.stringify(hooks, null, 2));
+    }
 
     return {
       originalName: filename,
@@ -141,17 +182,24 @@ export class DeliveryFile {
       timestamp: new Date().toISOString(),
       size: data.length,
       encrypted: true,
+      hooks,
     };
   }
 
   /**
    * Save file for delivery to host (pull)
    */
-  saveFileForHost(hostId: string, filename: string, data: Buffer): FileMetadata {
+  saveFileForHost(hostId: string, filename: string, data: Buffer, hooks?: ClientFileHooks): FileMetadata {
     const storedName = this.generateStorageFilename(hostId, filename);
     const filePath = join(DeliveryFile.FILES_FOR_HOSTS_DIR, storedName);
 
     writeFileSync(filePath, data);
+
+    // Save hooks as separate JSON file if provided
+    if (hooks) {
+      const hooksFilePath = `${filePath}.hooks.json`;
+      writeFileSync(hooksFilePath, JSON.stringify(hooks, null, 2));
+    }
 
     return {
       originalName: filename,
@@ -160,6 +208,7 @@ export class DeliveryFile {
       timestamp: new Date().toISOString(),
       size: data.length,
       encrypted: true,
+      hooks,
     };
   }
 
@@ -197,7 +246,7 @@ export class DeliveryFile {
       directory === "for" ? DeliveryFile.FILES_FOR_HOSTS_DIR : DeliveryFile.FILES_FROM_HOSTS_DIR;
 
     const files = readdirSync(dir);
-    const hostFiles = files.filter((f) => f.startsWith(`${hostId}_`));
+    const hostFiles = files.filter((f) => f.startsWith(`${hostId}_`) && !f.endsWith(".hooks.json"));
 
     return hostFiles.map((storedName) => {
       const filePath = join(dir, storedName);
@@ -209,6 +258,9 @@ export class DeliveryFile {
       const timestampPart = parts[parts.length - 1];
       const originalName = parts.slice(1, -1).join("_");
 
+      // Load hooks if they exist
+      const hooks = this.getHooksByStoredName(storedName, directory);
+
       return {
         originalName,
         storedName,
@@ -216,6 +268,7 @@ export class DeliveryFile {
         timestamp: stats.mtime.toISOString(),
         size: stats.size,
         encrypted: true,
+        hooks: hooks || undefined,
       };
     });
   }
@@ -234,6 +287,28 @@ export class DeliveryFile {
     }
 
     return readFileSync(filePath);
+  }
+
+  /**
+   * Get hooks for a file by stored name
+   */
+  getHooksByStoredName(storedName: string, directory: "for" | "from" = "for"): ClientFileHooks | null {
+    const dir =
+      directory === "for" ? DeliveryFile.FILES_FOR_HOSTS_DIR : DeliveryFile.FILES_FROM_HOSTS_DIR;
+
+    const hooksFilePath = join(dir, `${storedName}.hooks.json`);
+
+    if (!existsSync(hooksFilePath)) {
+      return null;
+    }
+
+    try {
+      const hooksData = readFileSync(hooksFilePath, "utf-8");
+      return JSON.parse(hooksData);
+    } catch (error) {
+      console.error(`Failed to read hooks file: ${hooksFilePath}`, error);
+      return null;
+    }
   }
 
   /**
@@ -386,9 +461,21 @@ export class SoftDeliveryServer extends Server {
         const filename = (formData.get("filename") as string) || file?.name;
         const isDirectory = formData.get("isDirectory") === "true";
         const share = formData.get("share") === "true"; // Share with other hosts
+        const hooksJson = formData.get("hooks") as string | null;
 
         if (!file) {
           return this.errorResponse("No file provided");
+        }
+
+        // Parse hooks if provided
+        let hooks: ClientFileHooks | undefined = undefined;
+        if (hooksJson) {
+          try {
+            hooks = JSON.parse(hooksJson);
+            console.log(`[PUSH] Received hooks for ${filename}:`, hooks);
+          } catch (error) {
+            console.error("[PUSH] Failed to parse hooks:", error);
+          }
         }
 
         // Read file data
@@ -407,7 +494,7 @@ export class SoftDeliveryServer extends Server {
         let metadata: FileMetadata;
         if (share) {
           // Save to files_for_hosts so other hosts can pull it
-          metadata = this.fileManager.saveFileForHost(targetHostId, filename, decryptedData);
+          metadata = this.fileManager.saveFileForHost(targetHostId, filename, decryptedData, hooks);
           console.log(
             `[PUSH] Shared ${
               isDirectory ? "directory" : "file"
@@ -415,7 +502,7 @@ export class SoftDeliveryServer extends Server {
           );
         } else {
           // Save to files_from_hosts (default behavior)
-          metadata = this.fileManager.saveFileFromHost(targetHostId, filename, decryptedData);
+          metadata = this.fileManager.saveFileFromHost(targetHostId, filename, decryptedData, hooks);
           console.log(
             `[PUSH] Received ${
               isDirectory ? "directory" : "file"
@@ -456,7 +543,7 @@ export class SoftDeliveryServer extends Server {
 
       try {
         // Get list of files client already has
-        const body = await req.json();
+        const body = await req.json() as PullRequestBody;
         const clientFiles = body.clientFiles || []; // Array of stored filenames
 
         // Get all files available for this host
@@ -477,6 +564,7 @@ export class SoftDeliveryServer extends Server {
             size: f.size,
             timestamp: f.timestamp,
             isDirectory: f.isDirectory,
+            hooks: f.hooks,
           })),
           count: newFiles.length,
         });
@@ -496,7 +584,7 @@ export class SoftDeliveryServer extends Server {
 
       try {
         // Get requested file by stored name
-        const body = await req.json();
+        const body = await req.json() as DownloadRequestBody;
         const storedName = body.storedName;
 
         if (!storedName) {
@@ -546,7 +634,7 @@ export class SoftDeliveryServer extends Server {
       }
 
       try {
-        const body = await req.json();
+        const body = await req.json() as FilesRequestBody;
         const direction = body.direction || "for"; // 'for' or 'from'
 
         const files = this.fileManager.listFilesForHost(auth.hostId, direction as "for" | "from");

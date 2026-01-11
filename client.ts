@@ -50,7 +50,7 @@ interface ClientConfig {
   silentMode: boolean;
   sharedHooks?: ClientFileHooks;
   localHooks?: ClientFileHooks;
-  remoteHooks?: ClientFileHooks;
+  remoteHooks?: ClientRemoteHooks;
 }
 
 /**
@@ -59,6 +59,44 @@ interface ClientConfig {
 interface SyncState {
   downloadedFiles: string[];
   lastSync: string;
+}
+
+/**
+ * File info from server
+ */
+interface FileInfo {
+  storedName: string;
+  originalName: string;
+  size: number;
+  timestamp: string;
+  isDirectory?: boolean;
+  hooks?: ClientFileHooks;
+}
+
+/**
+ * Pull response from server
+ */
+interface PullResponse {
+  totalFiles: number;
+  newFiles: FileInfo[];
+  count: number;
+}
+
+/**
+ * List response from server
+ */
+interface ListResponse {
+  hostId: string;
+  direction: string;
+  files: string[];
+  count: number;
+}
+
+/**
+ * Status response from server
+ */
+interface StatusResponse {
+  status: string;
 }
 
 /**
@@ -270,9 +308,9 @@ class SoftDeliveryClient {
    */
   async push(
     filePath: string,
-    customFilename?: string,
+    customFilename: string | undefined = undefined,
     share: boolean = false,
-    targetHostname?: string
+    targetHostname: string | undefined = undefined
   ): Promise<boolean> {
     const targetHost = targetHostname || this.config.hostname;
     this.logger.info(
@@ -319,6 +357,15 @@ class SoftDeliveryClient {
       formData.append("filename", filename);
       formData.append("isDirectory", isDirectory.toString());
       formData.append("share", share.toString());
+
+      // Check if we have remoteHooks for the target host
+      if (this.config.remoteHooks) {
+        const remoteHooksForTarget = (this.config.remoteHooks as any)[targetHost];
+        if (remoteHooksForTarget) {
+          formData.append("hooks", JSON.stringify(remoteHooksForTarget));
+          this.logger.info(`Sending hooks to ${targetHost}`);
+        }
+      }
 
       // Send request
       const response = await fetch(`${this.config.serverUrl}/push`, {
@@ -377,7 +424,7 @@ class SoftDeliveryClient {
         return 0;
       }
 
-      const result = await response.json();
+      const result = await response.json() as PullResponse;
       this.logger.info(`Server has ${result.totalFiles} total files`);
       this.logger.info(`New files to download: ${result.count}`);
 
@@ -391,6 +438,15 @@ class SoftDeliveryClient {
       // Download each new file
       for (const fileInfo of result.newFiles) {
         this.logger.info(`Downloading: ${fileInfo.originalName} (${fileInfo.size} bytes)`);
+
+        // If file has hooks, save them to config
+        if (fileInfo.hooks) {
+          this.logger.info(`File has hooks, updating config...`);
+          const configPath = process.env.CLIENT_CONFIG || "./client.config.json";
+          this.saveHooksToConfig(configPath, fileInfo.hooks);
+          // Reload config to use new hooks
+          this.config = JSON.parse(readFileSync(configPath, "utf-8"));
+        }
 
         const downloadResponse = await fetch(`${this.config.serverUrl}/download`, {
           method: "POST",
@@ -479,7 +535,7 @@ class SoftDeliveryClient {
         body: JSON.stringify({ direction }),
       });
 
-      const result = await response.json();
+      const result = await response.json() as ListResponse;
 
       if (response.ok) {
         this.logger.info(`Files (${result.count}):`);
@@ -500,7 +556,7 @@ class SoftDeliveryClient {
 
     try {
       const response = await fetch(`${this.config.serverUrl}/status`);
-      const result = await response.json();
+      const result = await response.json() as StatusResponse;
       this.logger.success(`Server status: ${result.status}`);
       return true;
     } catch (error) {
@@ -582,6 +638,27 @@ class SoftDeliveryClient {
     }
     return join(this.config.localStorageDir, originalName);
   }
+
+  /**
+   * Save hooks to config file (update localHooks)
+   */
+  private saveHooksToConfig(configPath: string, hooks: ClientFileHooks): void {
+    try {
+      // Read current config
+      const configData = readFileSync(configPath, "utf-8");
+      const config = JSON.parse(configData);
+
+      // Update localHooks
+      config.localHooks = hooks;
+
+      // Write back to file with pretty formatting
+      writeFileSync(configPath, JSON.stringify(config, null, 2));
+      
+      this.logger.info("Hooks saved to config as localHooks");
+    } catch (error) {
+      this.logger.error(`Failed to save hooks to config: ${error}`);
+    }
+  }
 }
 
 /**
@@ -631,7 +708,7 @@ Examples:
         break;
 
       case "push":
-        if (args.length < 2) {
+        if (args.length < 2 || !args[1]) {
           console.error("❌ Usage: push <filepath> [--share] [--target-host <hostname>]");
           process.exit(1);
         }
@@ -641,8 +718,13 @@ Examples:
           targetHostIndex !== -1 && args[targetHostIndex + 1]
             ? args[targetHostIndex + 1]
             : undefined;
-        const filename = args[2] && !args[2].startsWith("--") ? args[2] : undefined;
-        await client.push(args[1], filename, share, targetHost);
+        const customFilename = args[2] && !args[2].startsWith("--") ? args[2] : undefined;
+        await client.push(
+          args[1], 
+          customFilename as string | undefined, 
+          share, 
+          targetHost as string | undefined
+        );
         break;
 
       case "pull":
