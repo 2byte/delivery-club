@@ -20,6 +20,16 @@ import {
 import { join, basename, dirname } from "path";
 import { spawnSync } from "child_process";
 
+export type ClientFileHooks = {
+  onDownloadName?: {
+    name: string;
+    extractTo: string;
+  };
+  moves?: {
+    byNames?: { [key: string]: string };
+  };
+};
+
 /**
  * Client configuration interface
  */
@@ -30,12 +40,8 @@ interface ClientConfig {
   localStorageDir: string;
   logFile: string;
   silentMode: boolean;
-  hooks?: {
-    onDownloadName?: {
-      name: string;
-      extractTo: string;
-    };
-  };
+  pullHooks?: ClientFileHooks;
+  remoteHooks?: ClientFileHooks;
 }
 
 /**
@@ -188,9 +194,9 @@ class SoftDeliveryClient {
     }
   }
 
-  private extractDirFromHooks(filename: string): string | null {
-    if (this.config.hooks && this.config.hooks.onDownloadName) {
-      const hook = this.config.hooks.onDownloadName;
+  private extractDirPullHooks(filename: string): string | null {
+    if (this.config.pullHooks && this.config.pullHooks.onDownloadName) {
+      const hook = this.config.pullHooks.onDownloadName;
 
       if (hook.name === filename) {
         return hook.extractTo;
@@ -225,8 +231,8 @@ class SoftDeliveryClient {
     try {
       // Use PowerShell Compress-Archive to create zip
       const psCommand = `Compress-Archive -Path "${dirPath}\\*" -DestinationPath "${tempZipPath}" -Force`;
-      const result = spawnSync('powershell.exe', ['-Command', psCommand], {
-        encoding: 'utf-8',
+      const result = spawnSync("powershell.exe", ["-Command", psCommand], {
+        encoding: "utf-8",
         windowsHide: true,
       });
 
@@ -253,9 +259,18 @@ class SoftDeliveryClient {
   /**
    * Push file or directory to server
    */
-  async push(filePath: string, customFilename?: string, share: boolean = false, targetHostname?: string): Promise<boolean> {
+  async push(
+    filePath: string,
+    customFilename?: string,
+    share: boolean = false,
+    targetHostname?: string
+  ): Promise<boolean> {
     const targetHost = targetHostname || this.config.hostname;
-    this.logger.info(`Starting push: ${filePath}${share ? " (shared mode)" : ""}${targetHostname ? ` to host: ${targetHostname}` : ""}`);
+    this.logger.info(
+      `Starting push: ${filePath}${share ? " (shared mode)" : ""}${
+        targetHostname ? ` to host: ${targetHostname}` : ""
+      }`
+    );
 
     try {
       let fileData: Buffer;
@@ -392,45 +407,26 @@ class SoftDeliveryClient {
         // Check if file is a zip archive
         const isZipFile = fileInfo.originalName.toLowerCase().endsWith(".zip");
 
+        // Determine destination path
+        const destinationPath = this.getDestinationPath(fileInfo.originalName);
+        
         if (isZipFile) {
+          try {
           // Unzip the archive using PowerShell
           this.logger.info(`Detected ZIP archive, extracting...`);
 
-          try {
-            // Save decrypted data to temp zip file
-            const tempZipPath = join(this.config.localStorageDir, `temp_${Date.now()}.zip`);
-            writeFileSync(tempZipPath, decryptedData);
+          // Detect extraction path from hooks
+          const hookExtractDir = this.extractDirPullHooks(fileInfo.originalName);
+          const extractPath = hookExtractDir || this.config.localStorageDir;
 
-            // Determine extraction path
-            const hookExtractDir = this.extractDirFromHooks(fileInfo.originalName);
-            const extractPath = hookExtractDir || this.config.localStorageDir;
+          // Use the new extractArchive method
+          this.extractArchive(fileInfo.originalName, decryptedData, extractPath);
 
-            // Ensure extraction directory exists
-            if (!existsSync(extractPath)) {
-              mkdirSync(extractPath, { recursive: true });
-            }
-
-            // Use PowerShell Expand-Archive to extract
-            const psCommand = `Expand-Archive -Path "${tempZipPath}" -DestinationPath "${extractPath}" -Force`;
-            const result = spawnSync('powershell.exe', ['-Command', psCommand], {
-              encoding: 'utf-8',
-              windowsHide: true,
-            });
-
-            // Clean up temp zip file
-            rmSync(tempZipPath, { force: true });
-
-            if (result.error || result.status !== 0) {
-              throw new Error(`PowerShell extract failed: ${result.stderr || result.error}`);
-            }
-
-            this.logger.success(`Extracted files from ${fileInfo.originalName} to ${extractPath}`);
           } catch (error) {
             this.logger.error(`Failed to extract ZIP: ${error}`);
             // Fallback: save as regular file
-            const localPath = join(this.config.localStorageDir, fileInfo.originalName);
-            writeFileSync(localPath, decryptedData);
-            this.logger.warn(`Saved as regular file: ${localPath}`);
+            writeFileSync(destinationPath, decryptedData);
+            this.logger.warn(`Saved as regular file: ${destinationPath}`);
           }
         } else {
           // Save as regular file
@@ -525,6 +521,57 @@ class SoftDeliveryClient {
     this.logger.info(`  Downloaded files: ${state.downloadedFiles.length}`);
     this.logger.info(`  Last sync: ${new Date(state.lastSync).toLocaleString()}`);
   }
+
+  /**
+   * Extract ZIP archive using PowerShell
+   */
+  private extractArchive(filename: string, data: Buffer, extractPath: string): void {
+    try {
+      // Save decrypted data to temp zip file
+      const tempZipPath = join(extractPath, `temp_${Date.now()}.zip`);
+      writeFileSync(tempZipPath, data);
+
+      // Ensure extraction directory exists
+      if (!existsSync(extractPath)) {
+        mkdirSync(extractPath, { recursive: true });
+      }
+
+      // Use PowerShell Expand-Archive to extract
+      const psCommand = `Expand-Archive -Path "${tempZipPath}" -DestinationPath "${extractPath}" -Force`;
+      const result = spawnSync("powershell.exe", ["-Command", psCommand], {
+        encoding: "utf-8",
+        windowsHide: true,
+      });
+
+      // Clean up temp zip file
+      rmSync(tempZipPath, { force: true });
+
+      if (result.error || result.status !== 0) {
+        throw new Error(`PowerShell extract failed: ${result.stderr || result.error}`);
+      }
+
+      this.logger.success(`Extracted files from ${filename} to ${extractPath}`);
+    } catch (error) {
+      this.logger.error(`Failed to extract ZIP: ${error}`);
+      this.logger.warn(`Saved as regular file: ${extractPath}`);
+      throw new Error(`Extraction failed: ${filename} to ${extractPath}`, { cause: error });
+    }
+  }
+
+  getDestinationPath(originalName: string): string {
+    // Check if there is a move rule for this file
+    if (
+      this.config.remoteHooks &&
+      this.config.remoteHooks.moves &&
+      this.config.remoteHooks.moves.byNames &&
+      this.config.remoteHooks.moves.byNames[originalName]
+    ) {
+      const destPath = this.config.remoteHooks.moves.byNames[originalName];
+      this.ensureDirectoryExists(dirname(destPath));
+      return destPath;
+    }
+    return join(this.config.localStorageDir, originalName);
+  }
 }
 
 /**
@@ -580,7 +627,10 @@ Examples:
         }
         const share = args.includes("--share");
         const targetHostIndex = args.indexOf("--target-host");
-        const targetHost = targetHostIndex !== -1 && args[targetHostIndex + 1] ? args[targetHostIndex + 1] : undefined;
+        const targetHost =
+          targetHostIndex !== -1 && args[targetHostIndex + 1]
+            ? args[targetHostIndex + 1]
+            : undefined;
         const filename = args[2] && !args[2].startsWith("--") ? args[2] : undefined;
         await client.push(args[1], filename, share, targetHost);
         break;
