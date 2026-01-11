@@ -31,6 +31,14 @@ export type ClientFileHooks = {
 };
 
 /**
+ * Remote hooks type
+ * Keyed by hostname
+ */
+export type ClientRemoteHooks = {
+  [key: string]: ClientFileHooks;
+}
+
+/**
  * Client configuration interface
  */
 interface ClientConfig {
@@ -40,7 +48,8 @@ interface ClientConfig {
   localStorageDir: string;
   logFile: string;
   silentMode: boolean;
-  pullHooks?: ClientFileHooks;
+  sharedHooks?: ClientFileHooks;
+  localHooks?: ClientFileHooks;
   remoteHooks?: ClientFileHooks;
 }
 
@@ -194,9 +203,9 @@ class SoftDeliveryClient {
     }
   }
 
-  private extractDirPullHooks(filename: string): string | null {
-    if (this.config.pullHooks && this.config.pullHooks.onDownloadName) {
-      const hook = this.config.pullHooks.onDownloadName;
+  private extractDirWithCheckHook(filename: string): string | null {
+    if (this.config.localHooks && this.config?.localHooks?.onDownloadName) {
+      const hook = this.config.localHooks.onDownloadName;
 
       if (hook.name === filename) {
         return hook.extractTo;
@@ -416,7 +425,7 @@ class SoftDeliveryClient {
           this.logger.info(`Detected ZIP archive, extracting...`);
 
           // Detect extraction path from hooks
-          const hookExtractDir = this.extractDirPullHooks(fileInfo.originalName);
+          const hookExtractDir = this.extractDirWithCheckHook(fileInfo.originalName);
           const extractPath = hookExtractDir || this.config.localStorageDir;
 
           // Use the new extractArchive method
@@ -430,7 +439,8 @@ class SoftDeliveryClient {
           }
         } else {
           // Save as regular file
-          const localPath = join(this.config.localStorageDir, fileInfo.originalName);
+          const localPath = destinationPath;
+
           writeFileSync(localPath, decryptedData);
           this.logger.success(`Saved: ${localPath}`);
         }
@@ -561,12 +571,12 @@ class SoftDeliveryClient {
   getDestinationPath(originalName: string): string {
     // Check if there is a move rule for this file
     if (
-      this.config.remoteHooks &&
-      this.config.remoteHooks.moves &&
-      this.config.remoteHooks.moves.byNames &&
-      this.config.remoteHooks.moves.byNames[originalName]
+      this.config.localHooks &&
+      this.config.localHooks.moves &&
+      this.config.localHooks.moves.byNames &&
+      this.config.localHooks.moves.byNames[originalName]
     ) {
-      const destPath = this.config.remoteHooks.moves.byNames[originalName];
+      const destPath = this.config.localHooks.moves.byNames[originalName];
       this.ensureDirectoryExists(dirname(destPath));
       return destPath;
     }
