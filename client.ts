@@ -12,8 +12,6 @@ import {
   existsSync,
   mkdirSync,
   statSync,
-  readdirSync,
-  lstatSync,
   appendFileSync,
   rmSync,
 } from "fs";
