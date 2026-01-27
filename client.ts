@@ -34,7 +34,7 @@ export type ClientFileHooks = {
  */
 export type ClientRemoteHooks = {
   [key: string]: ClientFileHooks;
-}
+};
 
 /**
  * Client configuration interface
@@ -46,6 +46,10 @@ interface ClientConfig {
   localStorageDir: string;
   logFile: string;
   silentMode: boolean;
+  ignores?: {
+    push?: string[];
+    pull?: string[];
+  };
   sharedHooks?: ClientFileHooks;
   localHooks?: ClientFileHooks;
   remoteHooks?: ClientRemoteHooks;
@@ -243,6 +247,9 @@ class SoftDeliveryClient {
     if (this.config.localHooks && this.config?.localHooks?.onDownloadName) {
       const hook = this.config.localHooks.onDownloadName;
 
+      // Check if exists directory for this hook
+      this.ensureDirectoryExists(hook.extractTo);
+      
       if (hook.name === filename) {
         return hook.extractTo;
       }
@@ -268,36 +275,77 @@ class SoftDeliveryClient {
   }
 
   /**
-   * Create zip archive from directory using PowerShell
+   * Create zip archive from directory using PowerShell with ignore rules
    */
   private createZipFromDirectory(dirPath: string): Buffer {
     const tempZipPath = join(dirname(dirPath), `temp_${Date.now()}.zip`);
+    const tempScriptPath = join(dirname(dirPath), `temp_script_${Date.now()}.ps1`);
+    const tempConfigPath = join(dirname(dirPath), `temp_config_${Date.now()}.json`);
 
     try {
-      // Use PowerShell Compress-Archive to create zip
-      const psCommand = `Compress-Archive -Path "${dirPath}\\*" -DestinationPath "${tempZipPath}" -Force`;
-      const result = spawnSync("powershell.exe", ["-Command", psCommand], {
-        encoding: "utf-8",
-        windowsHide: true,
-      });
+      // PowerShell script for archiving with ignore patterns
+      const psScript = `
+      param([string]$configPath, [string]$zipPath)
+
+      $config = Get-Content $configPath | ConvertFrom-Json
+
+      $ignoreDirs  = @()
+      $ignoreFiles = @()
+
+      foreach ($rule in $config.ignores.push) {
+          if ($rule -match '[*?]') { $ignoreFiles += $rule }
+          else { $ignoreDirs += $rule }
+      }
+
+      function Is-Ignored($item) {
+          foreach ($dir in $ignoreDirs) {
+              if ($item.FullName -match "\\\\$\{dir\}(\\\\|$)") { return $true }
+          }
+
+          if (-not $item.PSIsContainer) {
+              foreach ($mask in $ignoreFiles) {
+                  if ($item.Name -like $mask) { return $true }
+              }
+          }
+          return $false
+      }
+
+      Get-ChildItem . -Recurse -Force |
+          Where-Object { -not (Is-Ignored $_) } |
+          Compress-Archive -DestinationPath $zipPath -Force
+      `;
+
+      // Write temporary script and config files
+      writeFileSync(tempScriptPath, psScript);
+      writeFileSync(tempConfigPath, JSON.stringify(this.config));
+
+      // Execute PowerShell script
+      const result = spawnSync(
+        "powershell.exe",
+        ["-ExecutionPolicy", "Bypass", "-File", tempScriptPath, tempConfigPath, tempZipPath],
+        {
+          cwd: dirPath,
+          encoding: "utf-8",
+          windowsHide: true,
+        }
+      );
 
       if (result.error || result.status !== 0) {
-        throw new Error(`Failed to create zip: ${result.stderr || result.error}`);
+        const errorMsg = result.stderr || result.error || "Unknown error";
+        throw new Error(`Failed to create zip: ${errorMsg}`);
       }
 
       // Read the created zip file
       const zipData = readFileSync(tempZipPath);
 
-      // Clean up temp file
-      rmSync(tempZipPath, { force: true });
-
       return zipData;
     } catch (error) {
-      // Clean up temp file if it exists
-      if (existsSync(tempZipPath)) {
-        rmSync(tempZipPath, { force: true });
-      }
       throw error;
+    } finally {
+      // Clean up temporary files
+      rmSync(tempZipPath, { force: true });
+      rmSync(tempScriptPath, { force: true });
+      rmSync(tempConfigPath, { force: true });
     }
   }
 
@@ -422,7 +470,7 @@ class SoftDeliveryClient {
         return 0;
       }
 
-      const result = await response.json() as PullResponse;
+      const result = (await response.json()) as PullResponse;
       this.logger.info(`Server has ${result.totalFiles} total files`);
       this.logger.info(`New files to download: ${result.count}`);
 
@@ -472,19 +520,18 @@ class SoftDeliveryClient {
 
         // Determine destination path
         const destinationPath = this.getDestinationPath(fileInfo.originalName);
-        
+
         if (isZipFile) {
           try {
-          // Unzip the archive using PowerShell
-          this.logger.info(`Detected ZIP archive, extracting...`);
+            // Unzip the archive using PowerShell
+            this.logger.info(`Detected ZIP archive, extracting...`);
 
-          // Detect extraction path from hooks
-          const hookExtractDir = this.extractDirWithCheckHook(fileInfo.originalName);
-          const extractPath = hookExtractDir || this.config.localStorageDir;
+            // Detect extraction path from hooks
+            const hookExtractDir = this.extractDirWithCheckHook(fileInfo.originalName);
+            const extractPath = hookExtractDir || this.config.localStorageDir;
 
-          // Use the new extractArchive method
-          this.extractArchive(fileInfo.originalName, decryptedData, extractPath);
-
+            // Use the new extractArchive method
+            this.extractArchive(fileInfo.originalName, decryptedData, extractPath);
           } catch (error) {
             this.logger.error(`Failed to extract ZIP: ${error}`);
             // Fallback: save as regular file
@@ -533,7 +580,7 @@ class SoftDeliveryClient {
         body: JSON.stringify({ direction }),
       });
 
-      const result = await response.json() as ListResponse;
+      const result = (await response.json()) as ListResponse;
 
       if (response.ok) {
         this.logger.info(`Files (${result.count}):`);
@@ -554,7 +601,7 @@ class SoftDeliveryClient {
 
     try {
       const response = await fetch(`${this.config.serverUrl}/status`);
-      const result = await response.json() as StatusResponse;
+      const result = (await response.json()) as StatusResponse;
       this.logger.success(`Server status: ${result.status}`);
       return true;
     } catch (error) {
@@ -651,7 +698,7 @@ class SoftDeliveryClient {
 
       // Write back to file with pretty formatting
       writeFileSync(configPath, JSON.stringify(config, null, 2));
-      
+
       this.logger.info("Hooks saved to config as localHooks");
     } catch (error) {
       this.logger.error(`Failed to save hooks to config: ${error}`);
@@ -718,9 +765,9 @@ Examples:
             : undefined;
         const customFilename = args[2] && !args[2].startsWith("--") ? args[2] : undefined;
         await client.push(
-          args[1], 
-          customFilename as string | undefined, 
-          share, 
+          args[1],
+          customFilename as string | undefined,
+          share,
           targetHost as string | undefined
         );
         break;
