@@ -9,7 +9,6 @@ import {
   writeFileSync,
 } from "node:fs";
 import { join } from "node:path";
-import JSZip from "npm:jszip";
 import { Server } from "@2byte/bun-server";
 import { DatabaseFile } from "./DatabaseFile.ts";
 
@@ -251,40 +250,6 @@ export class DeliveryFile {
       console.error(`Failed to read hooks file: ${hooksFilePath}`, error);
       return null;
     }
-  }
-
-  public async createZipFromDirectory(dirPath: string): Promise<Buffer> {
-    const zip = new JSZip();
-
-    const addFilesToZip = (currentPath: string, zipFolder: any | null = null) => {
-      const items = readdirSync(currentPath);
-
-      for (const item of items) {
-        const fullPath = join(currentPath, item);
-        const stats = lstatSync(fullPath);
-
-        if (stats.isDirectory()) {
-          const folder = zipFolder ? zipFolder.folder(item) : zip.folder(item);
-          if (folder) {
-            addFilesToZip(fullPath, folder);
-          }
-          continue;
-        }
-
-        if (stats.isFile()) {
-          const fileData = readFileSync(fullPath);
-          if (zipFolder) {
-            zipFolder.file(item, fileData);
-          } else {
-            zip.file(item, fileData);
-          }
-        }
-      }
-    };
-
-    addFilesToZip(dirPath);
-
-    return Buffer.from(await zip.generateAsync({ type: "nodebuffer" }));
   }
 }
 
