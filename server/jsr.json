@@ -13,5 +13,6 @@
       "mod.ts",
       "src/**/*.ts"
     ]
-  }
+  },
+  "license": "MIT"
 }
