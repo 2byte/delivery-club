@@ -1,7 +1,0 @@
-{
-  "type": "module",
-  "dependencies": {
-    "jszip": "^3.10.1",
-    "readable-stream": "^4.7.0"
-  }
-}

@@ -1,0 +1,17 @@
+{
+  "name": "@2byte/delivery-club-server",
+  "version": "0.1.0",
+  "exports": "./mod.ts",
+  "imports": {
+    "@2byte/bun-server": "jsr:@2byte/bun-server@^1.0.0"
+  },
+  "publish": {
+    "include": [
+      "README.md",
+      ".env.example",
+      "deliverierCli.ts",
+      "mod.ts",
+      "src/**/*.ts"
+    ]
+  }
+}

@@ -98,7 +98,7 @@ bun client.ts sync-status
 ## Запуск сервера
 
 ```bash
-bun run index.ts
+bun run server/index.ts
 ```
 
 Сервер будет доступен на порту 3000 (по умолчанию).

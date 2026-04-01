@@ -1,0 +1,309 @@
+#!/usr/bin/env bun
+
+import { ServerScaffoldGenerator } from "./src/ServerScaffoldGenerator.ts";
+import { DatabaseFile } from "./src/DatabaseFile.ts";
+import type { DeliveryHost } from "./src/SoftDeliveryServer.ts";
+
+interface DeliveryHostsDB {
+  [hostId: string]: DeliveryHost;
+}
+
+interface CliParseResult {
+  command: string;
+  positional: string[];
+  options: Record<string, string | boolean>;
+}
+
+class DeliveryHostsCli {
+  private static readonly DB_PATH = "./storage/delivery_hosts.json";
+  private db: DatabaseFile<DeliveryHostsDB>;
+  private scaffoldGenerator: ServerScaffoldGenerator;
+
+  constructor() {
+    this.db = new DatabaseFile<DeliveryHostsDB>(DeliveryHostsCli.DB_PATH, {});
+    this.scaffoldGenerator = new ServerScaffoldGenerator();
+  }
+
+  public run(argv: string[]): void {
+    const parsed = this.parseCliArgs(argv);
+
+    if (!parsed.command || parsed.command === "help") {
+      this.showHelp();
+      return;
+    }
+
+    switch (parsed.command) {
+      case "list":
+        this.listHosts();
+        return;
+      case "add":
+        this.addHost(parsed.options);
+        return;
+      case "get":
+        this.getHost(this.requireHostId(parsed.positional, "get"));
+        return;
+      case "update":
+        this.updateHost(this.requireHostId(parsed.positional, "update"), parsed.options);
+        return;
+      case "delete":
+        this.deleteHost(this.requireHostId(parsed.positional, "delete"));
+        return;
+      case "init":
+        this.initConsumer(parsed.options);
+        return;
+      default:
+        this.exitWithError(`Unknown command: ${parsed.command}`);
+    }
+  }
+
+  private showHelp(): void {
+    console.log(`
+Delivery Club Server CLI
+
+Usage:
+  bun deliverierCli.ts <command> [options]
+
+Commands:
+  list                          List all delivery hosts
+  add                           Add a new delivery host
+  get <id>                      Get details of a specific host
+  update <id>                   Update an existing host
+  delete <id>                   Delete a host
+  init                          Generate consumer bootstrap files (.env, .env.example, index.ts)
+  help                          Show this help message
+
+Host options for add/update:
+  --name <name>                 Display name for the host
+  --hostname <hostname>         Hostname or IP address
+  --encryption <method>         Encryption method (for example AES-256)
+  --key <key>                   Encryption key or secret
+
+Init options:
+  --dir <path>                  Target directory for generated files (default: current directory)
+  --host-address <host>         Default HOST_ADDRESS value (default: 0.0.0.0)
+  --host-port <port>            Default HOST_PORT value (default: 3004)
+  --force                       Overwrite existing files
+
+Examples:
+  bun deliverierCli.ts add --name "Production" --hostname "prod.example.com" --encryption "AES-256" --key "secret123"
+  bun deliverierCli.ts init --dir ./server-app
+  bun deliverierCli.ts init --dir ./server-app --force --host-port 8080
+`);
+  }
+
+  private parseCliArgs(argv: string[]): CliParseResult {
+    const args = argv.slice(2);
+    const command = args[0] || "";
+    const positional: string[] = [];
+    const options: Record<string, string | boolean> = {};
+
+    for (let index = 1; index < args.length; index += 1) {
+      const token = args[index];
+      if (!token) {
+        continue;
+      }
+
+      if (token.startsWith("--")) {
+        const key = token.slice(2);
+        const next = args[index + 1];
+
+        if (!next || next.startsWith("--")) {
+          options[key] = true;
+          continue;
+        }
+
+        options[key] = next;
+        index += 1;
+        continue;
+      }
+
+      positional.push(token);
+    }
+
+    return { command, positional, options };
+  }
+
+  private generateHostId(): string {
+    const hosts = this.db.getAll();
+    const existingIds = Object.keys(hosts).filter((key) => key.startsWith("host_"));
+    const numbers = existingIds.map((id) => Number.parseInt(id.replace("host_", ""), 10) || 0);
+    const nextNumber = numbers.length > 0 ? Math.max(...numbers) + 1 : 1;
+    return `host_${nextNumber}`;
+  }
+
+  private formatDate(dateString: string): string {
+    return new Date(dateString).toLocaleString();
+  }
+
+  private displayHost(id: string, host: DeliveryHost): void {
+    console.log(`\nHost ID: ${id}`);
+    console.log(`Name: ${host.name}`);
+    console.log(`Hostname: ${host.hostname}`);
+    console.log(`Encryption: ${host.encryptionMethod}`);
+    console.log(`Key: ${host.key.substring(0, 10)}${"*".repeat(Math.max(0, host.key.length - 10))}`);
+    console.log(`Created: ${this.formatDate(host.createdAt)}`);
+    console.log(`Updated: ${this.formatDate(host.updatedAt)}\n`);
+  }
+
+  private listHosts(): void {
+    const hosts = this.db.getAll();
+    const hostIds = Object.keys(hosts);
+
+    if (hostIds.length === 0) {
+      console.log("No delivery hosts found. Use the add command to create one.");
+      return;
+    }
+
+    console.log(`\nDelivery Hosts (${hostIds.length} total):`);
+    for (const id of hostIds) {
+      const host = hosts[id];
+      if (!host) {
+        continue;
+      }
+
+      console.log(`\n[${id}]`);
+      console.log(`  Name: ${host.name}`);
+      console.log(`  Hostname: ${host.hostname}`);
+      console.log(`  Encryption: ${host.encryptionMethod}`);
+    }
+
+    console.log();
+  }
+
+  private getHost(hostId: string): void {
+    const host = this.db.get(hostId);
+    if (!host) {
+      this.exitWithError(`Host '${hostId}' not found.`);
+    }
+
+    this.displayHost(hostId, host);
+  }
+
+  private addHost(options: Record<string, string | boolean>): void {
+    const name = this.requireOption(options, "name");
+    const hostname = this.requireOption(options, "hostname");
+    const encryption = this.requireOption(options, "encryption");
+    const key = this.requireOption(options, "key");
+
+    const hostId = this.generateHostId();
+    const now = new Date().toISOString();
+
+    const newHost: DeliveryHost = {
+      name,
+      hostname,
+      encryptionMethod: encryption,
+      key,
+      createdAt: now,
+      updatedAt: now,
+    };
+
+    this.db.set(hostId, newHost);
+    console.log(`Successfully added delivery host '${hostId}'.`);
+    this.displayHost(hostId, newHost);
+  }
+
+  private updateHost(hostId: string, options: Record<string, string | boolean>): void {
+    const host = this.db.get(hostId);
+    if (!host) {
+      this.exitWithError(`Host '${hostId}' not found.`);
+    }
+
+    const updates: Partial<DeliveryHost> = {
+      updatedAt: new Date().toISOString(),
+    };
+
+    if (typeof options.name === "string") {
+      updates.name = options.name;
+    }
+    if (typeof options.hostname === "string") {
+      updates.hostname = options.hostname;
+    }
+    if (typeof options.encryption === "string") {
+      updates.encryptionMethod = options.encryption;
+    }
+    if (typeof options.key === "string") {
+      updates.key = options.key;
+    }
+
+    const updatedHost: DeliveryHost = {
+      ...host,
+      ...updates,
+    };
+
+    this.db.set(hostId, updatedHost);
+    console.log(`Successfully updated delivery host '${hostId}'.`);
+    this.displayHost(hostId, updatedHost);
+  }
+
+  private deleteHost(hostId: string): void {
+    const host = this.db.get(hostId);
+    if (!host) {
+      this.exitWithError(`Host '${hostId}' not found.`);
+    }
+
+    this.db.delete(hostId);
+    console.log(`Successfully deleted delivery host '${hostId}' (${host.name}).`);
+  }
+
+  private initConsumer(options: Record<string, string | boolean>): void {
+    const outputDir = typeof options.dir === "string" ? options.dir : process.cwd();
+    const hostAddress =
+      typeof options["host-address"] === "string" ? options["host-address"] : undefined;
+    const hostPort =
+      typeof options["host-port"] === "string"
+        ? Number.parseInt(options["host-port"], 10)
+        : undefined;
+
+    if (hostPort !== undefined && Number.isNaN(hostPort)) {
+      this.exitWithError("Option --host-port must be a number.");
+    }
+
+    const result = this.scaffoldGenerator.createConsumerBootstrap({
+      outputDir,
+      hostAddress,
+      hostPort,
+      force: Boolean(options.force),
+    });
+
+    console.log(`Generated bootstrap files in: ${result.outputDir}`);
+    if (result.created.length > 0) {
+      console.log("Created:");
+      for (const filePath of result.created) {
+        console.log(`  - ${filePath}`);
+      }
+    }
+
+    if (result.skipped.length > 0) {
+      console.log("Skipped (already exists, use --force to overwrite):");
+      for (const filePath of result.skipped) {
+        console.log(`  - ${filePath}`);
+      }
+    }
+  }
+
+  private requireHostId(positional: string[], commandName: string): string {
+    const hostId = positional[0];
+    if (!hostId) {
+      this.exitWithError(`Host ID is required. Usage: ${commandName} <id>`);
+    }
+
+    return hostId;
+  }
+
+  private requireOption(options: Record<string, string | boolean>, key: string): string {
+    const value = options[key];
+    if (typeof value !== "string" || value.length === 0) {
+      this.exitWithError(`Missing required option --${key}.`);
+    }
+
+    return value;
+  }
+
+  private exitWithError(message: string): never {
+    console.error(`Error: ${message}`);
+    process.exit(1);
+  }
+}
+
+const cli = new DeliveryHostsCli();
+cli.run(process.argv);

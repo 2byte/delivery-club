@@ -2,7 +2,7 @@
 REM Soft Delivery Client - Deployment Package Creator
 REM Creates a minimal deployment package with exe and minimal node_modules
 
-set RUNTIME_DIR=%~dp0runtime
+set RUNTIME_DIR=%~dp0..\runtime
 set BUN_EXE=%RUNTIME_DIR%\bun.exe
 
 REM Check if portable bun exists

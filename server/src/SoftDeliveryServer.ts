@@ -1,22 +1,19 @@
-import { Server } from "./Server.js";
-import { DatabaseFile } from "./DatabaseFile";
-import { createHash, createCipheriv, createDecipheriv, randomBytes } from "crypto";
+import { createCipheriv, createDecipheriv, createHash, randomBytes } from "node:crypto";
 import {
   existsSync,
+  lstatSync,
   mkdirSync,
-  writeFileSync,
   readFileSync,
   readdirSync,
   statSync,
-  lstatSync,
-} from "fs";
-import { join, relative, sep } from "path";
-import JSZip from "jszip";
+  writeFileSync,
+} from "node:fs";
+import { join } from "node:path";
+import JSZip from "npm:jszip";
+import { Server } from "@2byte/bun-server";
+import { DatabaseFile } from "./DatabaseFile.ts";
 
-/**
- * Delivery host configuration interface
- */
-interface DeliveryHost {
+export interface DeliveryHost {
   name: string;
   hostname: string;
   encryptionMethod: string;
@@ -25,98 +22,33 @@ interface DeliveryHost {
   updatedAt: string;
 }
 
-/**
- * Database structure for delivery hosts
- */
 interface DeliveryHostsDB {
   [hostId: string]: DeliveryHost;
 }
 
-/**
- * Class for managing delivery hosts from database
- */
-export class SoftDeliveryHost {
-  private db: DatabaseFile<DeliveryHostsDB>;
-  private static readonly DB_PATH = "./storage/delivery_hosts.json";
-
-  constructor() {
-    this.db = new DatabaseFile<DeliveryHostsDB>(SoftDeliveryHost.DB_PATH, {});
-  }
-
-  /**
-   * Get all hosts
-   */
-  getAllHosts(): DeliveryHostsDB {
-    return this.db.getAll();
-  }
-
-  /**
-   * Get a specific host by ID
-   */
-  getHost(hostId: string): DeliveryHost | undefined {
-    return this.db.get(hostId);
-  }
-
-  /**
-   * Find host by hostname
-   */
-  findHostByHostname(hostname: string): { id: string; host: DeliveryHost } | null {
-    const hosts = this.db.getAll();
-    for (const [id, host] of Object.entries(hosts)) {
-      if (host.hostname === hostname) {
-        return { id, host };
-      }
-    }
-    return null;
-  }
-
-  /**
-   * Verify host authentication key
-   */
-  verifyHost(hostname: string, key: string): boolean {
-    const result = this.findHostByHostname(hostname);
-    return result !== null && result.host.key === key;
-  }
-}
-
-/**
- * File hooks interface (imported from client)
- */
-interface ClientFileHooks {
+export interface ClientFileHooks {
   onDownloadName?: {
     name: string;
     extractTo: string;
   };
   moves?: {
-    byNames?: { [key: string]: string };
+    byNames?: Record<string, string>;
   };
 }
 
-/**
- * Pull request body interface
- */
 interface PullRequestBody {
   clientFiles: string[];
 }
 
-/**
- * Download request body interface
- */
 interface DownloadRequestBody {
   storedName: string;
 }
 
-/**
- * Files list request body interface
- */
 interface FilesRequestBody {
   direction?: "for" | "from";
 }
 
-/**
- * File metadata interface
- */
-interface FileMetadata {
+export interface FileMetadata {
   originalName: string;
   storedName: string;
   hostId: string;
@@ -128,9 +60,44 @@ interface FileMetadata {
   hooks?: ClientFileHooks;
 }
 
-/**
- * Class for managing file storage and retrieval
- */
+export interface SoftDeliveryServerConfig {
+  hostname: string;
+  port: number;
+}
+
+export class SoftDeliveryHost {
+  private db: DatabaseFile<DeliveryHostsDB>;
+  private static readonly DB_PATH = "./storage/delivery_hosts.json";
+
+  constructor() {
+    this.db = new DatabaseFile<DeliveryHostsDB>(SoftDeliveryHost.DB_PATH, {});
+  }
+
+  public getAllHosts(): DeliveryHostsDB {
+    return this.db.getAll();
+  }
+
+  public getHost(hostId: string): DeliveryHost | undefined {
+    return this.db.get(hostId);
+  }
+
+  public findHostByHostname(hostname: string): { id: string; host: DeliveryHost } | null {
+    const hosts = this.db.getAll();
+    for (const [id, host] of Object.entries(hosts)) {
+      if (host.hostname === hostname) {
+        return { id, host };
+      }
+    }
+
+    return null;
+  }
+
+  public verifyHost(hostname: string, key: string): boolean {
+    const result = this.findHostByHostname(hostname);
+    return result !== null && result.host.key === key;
+  }
+}
+
 export class DeliveryFile {
   private static readonly FILES_FOR_HOSTS_DIR = "./storage/files_for_hosts";
   private static readonly FILES_FROM_HOSTS_DIR = "./storage/files_from_hosts";
@@ -139,40 +106,35 @@ export class DeliveryFile {
     this.ensureDirectories();
   }
 
-  /**`
-   * Ensure storage directories exist
-   */
   private ensureDirectories(): void {
     if (!existsSync(DeliveryFile.FILES_FOR_HOSTS_DIR)) {
       mkdirSync(DeliveryFile.FILES_FOR_HOSTS_DIR, { recursive: true });
     }
+
     if (!existsSync(DeliveryFile.FILES_FROM_HOSTS_DIR)) {
       mkdirSync(DeliveryFile.FILES_FROM_HOSTS_DIR, { recursive: true });
     }
   }
 
-  /**
-   * Generate storage filename
-   */
   private generateStorageFilename(hostId: string, originalFilename: string): string {
     const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
     const cleanFilename = originalFilename.replace(/[^a-zA-Z0-9._-]/g, "_");
     return `${hostId}_${cleanFilename}_${timestamp}`;
   }
 
-  /**
-   * Save file received from host (push)
-   */
-  saveFileFromHost(hostId: string, filename: string, data: Buffer, hooks?: ClientFileHooks): FileMetadata {
+  public saveFileFromHost(
+    hostId: string,
+    filename: string,
+    data: Buffer,
+    hooks?: ClientFileHooks,
+  ): FileMetadata {
     const storedName = this.generateStorageFilename(hostId, filename);
     const filePath = join(DeliveryFile.FILES_FROM_HOSTS_DIR, storedName);
 
     writeFileSync(filePath, data);
 
-    // Save hooks as separate JSON file if provided
     if (hooks) {
-      const hooksFilePath = `${filePath}.hooks.json`;
-      writeFileSync(hooksFilePath, JSON.stringify(hooks, null, 2));
+      writeFileSync(`${filePath}.hooks.json`, JSON.stringify(hooks, null, 2));
     }
 
     return {
@@ -186,19 +148,19 @@ export class DeliveryFile {
     };
   }
 
-  /**
-   * Save file for delivery to host (pull)
-   */
-  saveFileForHost(hostId: string, filename: string, data: Buffer, hooks?: ClientFileHooks): FileMetadata {
+  public saveFileForHost(
+    hostId: string,
+    filename: string,
+    data: Buffer,
+    hooks?: ClientFileHooks,
+  ): FileMetadata {
     const storedName = this.generateStorageFilename(hostId, filename);
     const filePath = join(DeliveryFile.FILES_FOR_HOSTS_DIR, storedName);
 
     writeFileSync(filePath, data);
 
-    // Save hooks as separate JSON file if provided
     if (hooks) {
-      const hooksFilePath = `${filePath}.hooks.json`;
-      writeFileSync(hooksFilePath, JSON.stringify(hooks, null, 2));
+      writeFileSync(`${filePath}.hooks.json`, JSON.stringify(hooks, null, 2));
     }
 
     return {
@@ -212,53 +174,39 @@ export class DeliveryFile {
     };
   }
 
-  /**
-   * Get file for host to pull
-   */
-  getFileForHost(hostId: string, filename: string): Buffer | null {
+  public getFileForHost(hostId: string, filename: string): Buffer | null {
     const files = readdirSync(DeliveryFile.FILES_FOR_HOSTS_DIR);
-    const matchingFile = files.find((f) => f.startsWith(`${hostId}_`) && f.includes(filename));
+    const matchingFile = files.find((fileName) => {
+      return fileName.startsWith(`${hostId}_`) && fileName.includes(filename);
+    });
 
     if (!matchingFile) {
       return null;
     }
 
-    const filePath = join(DeliveryFile.FILES_FOR_HOSTS_DIR, matchingFile);
-    return readFileSync(filePath);
+    return readFileSync(join(DeliveryFile.FILES_FOR_HOSTS_DIR, matchingFile));
   }
 
-  /**
-   * List files for specific host
-   */
-  listFilesForHost(hostId: string, directory: "for" | "from" = "for"): string[] {
+  public listFilesForHost(hostId: string, directory: "for" | "from" = "for"): string[] {
     const dir =
       directory === "for" ? DeliveryFile.FILES_FOR_HOSTS_DIR : DeliveryFile.FILES_FROM_HOSTS_DIR;
 
-    const files = readdirSync(dir);
-    return files.filter((f) => f.startsWith(`${hostId}_`));
+    return readdirSync(dir).filter((fileName) => fileName.startsWith(`${hostId}_`));
   }
 
-  /**
-   * Get detailed file list with metadata for git-style pull
-   */
-  listFilesWithMetadata(hostId: string, directory: "for" | "from" = "for"): FileMetadata[] {
+  public listFilesWithMetadata(hostId: string, directory: "for" | "from" = "for"): FileMetadata[] {
     const dir =
       directory === "for" ? DeliveryFile.FILES_FOR_HOSTS_DIR : DeliveryFile.FILES_FROM_HOSTS_DIR;
 
-    const files = readdirSync(dir);
-    const hostFiles = files.filter((f) => f.startsWith(`${hostId}_`) && !f.endsWith(".hooks.json"));
+    const hostFiles = readdirSync(dir).filter((fileName) => {
+      return fileName.startsWith(`${hostId}_`) && !fileName.endsWith(".hooks.json");
+    });
 
     return hostFiles.map((storedName) => {
       const filePath = join(dir, storedName);
       const stats = statSync(filePath);
-
-      // Parse original filename from stored name
-      // Format: hostId_filename_timestamp
       const parts = storedName.split("_");
-      const timestampPart = parts[parts.length - 1];
       const originalName = parts.slice(1, -1).join("_");
-
-      // Load hooks if they exist
       const hooks = this.getHooksByStoredName(storedName, directory);
 
       return {
@@ -273,13 +221,9 @@ export class DeliveryFile {
     });
   }
 
-  /**
-   * Get file by stored name
-   */
-  getFileByStoredName(storedName: string, directory: "for" | "from" = "for"): Buffer | null {
+  public getFileByStoredName(storedName: string, directory: "for" | "from" = "for"): Buffer | null {
     const dir =
       directory === "for" ? DeliveryFile.FILES_FOR_HOSTS_DIR : DeliveryFile.FILES_FROM_HOSTS_DIR;
-
     const filePath = join(dir, storedName);
 
     if (!existsSync(filePath)) {
@@ -289,13 +233,12 @@ export class DeliveryFile {
     return readFileSync(filePath);
   }
 
-  /**
-   * Get hooks for a file by stored name
-   */
-  getHooksByStoredName(storedName: string, directory: "for" | "from" = "for"): ClientFileHooks | null {
+  public getHooksByStoredName(
+    storedName: string,
+    directory: "for" | "from" = "for",
+  ): ClientFileHooks | null {
     const dir =
       directory === "for" ? DeliveryFile.FILES_FOR_HOSTS_DIR : DeliveryFile.FILES_FROM_HOSTS_DIR;
-
     const hooksFilePath = join(dir, `${storedName}.hooks.json`);
 
     if (!existsSync(hooksFilePath)) {
@@ -303,21 +246,17 @@ export class DeliveryFile {
     }
 
     try {
-      const hooksData = readFileSync(hooksFilePath, "utf-8");
-      return JSON.parse(hooksData);
+      return JSON.parse(readFileSync(hooksFilePath, "utf-8")) as ClientFileHooks;
     } catch (error) {
       console.error(`Failed to read hooks file: ${hooksFilePath}`, error);
       return null;
     }
   }
 
-  /**
-   * Create zip archive from directory
-   */
-  async createZipFromDirectory(dirPath: string): Promise<Buffer> {
+  public async createZipFromDirectory(dirPath: string): Promise<Buffer> {
     const zip = new JSZip();
 
-    const addFilesToZip = (currentPath: string, zipFolder: JSZip | null = null) => {
+    const addFilesToZip = (currentPath: string, zipFolder: any | null = null) => {
       const items = readdirSync(currentPath);
 
       for (const item of items) {
@@ -329,7 +268,10 @@ export class DeliveryFile {
           if (folder) {
             addFilesToZip(fullPath, folder);
           }
-        } else if (stats.isFile()) {
+          continue;
+        }
+
+        if (stats.isFile()) {
           const fileData = readFileSync(fullPath);
           if (zipFolder) {
             zipFolder.file(item, fileData);
@@ -346,41 +288,24 @@ export class DeliveryFile {
   }
 }
 
-/**
- * Encryption utilities class
- */
 class EncryptionUtils {
-  /**
-   * Create encryption key hash from string
-   */
-  static createKeyHash(key: string): Buffer {
+  public static createKeyHash(key: string): Buffer {
     return createHash("sha256").update(key).digest();
   }
 
-  /**
-   * Encrypt data using AES-256-CBC
-   */
-  static encrypt(data: Buffer, key: string): Buffer {
+  public static encrypt(data: Buffer, key: string): Buffer {
     const keyHash = this.createKeyHash(key);
     const iv = randomBytes(16);
     const cipher = createCipheriv("aes-256-cbc", keyHash, iv);
-
     const encrypted = Buffer.concat([cipher.update(data), cipher.final()]);
 
-    // Prepend IV to encrypted data
     return Buffer.concat([iv, encrypted]);
   }
 
-  /**
-   * Decrypt data using AES-256-CBC
-   */
-  static decrypt(encryptedData: Buffer, key: string): Buffer {
+  public static decrypt(encryptedData: Buffer, key: string): Buffer {
     const keyHash = this.createKeyHash(key);
-
-    // Extract IV from the beginning of encrypted data
     const iv = encryptedData.subarray(0, 16);
     const encrypted = encryptedData.subarray(16);
-
     const decipher = createDecipheriv("aes-256-cbc", keyHash, iv);
 
     return Buffer.concat([decipher.update(encrypted), decipher.final()]);
@@ -391,15 +316,12 @@ export class SoftDeliveryServer extends Server {
   private hostManager: SoftDeliveryHost;
   private fileManager: DeliveryFile;
 
-  constructor(private config: { hostname: string; port: number }) {
+  constructor(private config: SoftDeliveryServerConfig) {
     super({ hostname: config.hostname, port: config.port });
     this.hostManager = new SoftDeliveryHost();
     this.fileManager = new DeliveryFile();
   }
 
-  /**
-   * Authenticate host from request headers
-   */
   private authenticateHost(req: Request): {
     authenticated: boolean;
     hostId?: string;
@@ -425,97 +347,71 @@ export class SoftDeliveryServer extends Server {
     return { authenticated: true, hostId: result.id, host: result.host };
   }
 
-  /**
-   * Create error response
-   */
-  private errorResponse(message: string, status: number = 400): Response {
+  private errorResponse(message: string, status = 400): Response {
     return new Response(JSON.stringify({ error: message }), {
       status,
       headers: { "Content-Type": "application/json" },
     });
   }
 
-  /**
-   * Create success response
-   */
-  private successResponse(data: any, status: number = 200): Response {
+  private successResponse(data: unknown, status = 200): Response {
     return new Response(JSON.stringify(data), {
       status,
       headers: { "Content-Type": "application/json" },
     });
   }
 
-  async runServer(): Promise<void> {
-    // Push endpoint - host uploads encrypted file or directory (zipped) to server
+  public async runServer(): Promise<void> {
     this.post("/push", async (req: Request) => {
-      // Authenticate host
       const auth = this.authenticateHost(req);
       if (!auth.authenticated || !auth.hostId || !auth.host) {
         return this.errorResponse("Authentication failed", 401);
       }
 
       try {
-        // Get form data with file
         const formData = await req.formData();
         const file = formData.get("file") as File;
         const filename = (formData.get("filename") as string) || file?.name;
         const isDirectory = formData.get("isDirectory") === "true";
-        const share = formData.get("share") === "true"; // Share with other hosts
+        const share = formData.get("share") === "true";
         const hooksJson = formData.get("hooks") as string | null;
 
         if (!file) {
           return this.errorResponse("No file provided");
         }
 
-        // Parse hooks if provided
-        let hooks: ClientFileHooks | undefined = undefined;
+        let hooks: ClientFileHooks | undefined;
         if (hooksJson) {
           try {
-            hooks = JSON.parse(hooksJson);
+            hooks = JSON.parse(hooksJson) as ClientFileHooks;
             console.log(`[PUSH] Received hooks for ${filename}:`, hooks);
           } catch (error) {
             console.error("[PUSH] Failed to parse hooks:", error);
           }
         }
 
-        // Read file data
-        const arrayBuffer = await file.arrayBuffer();
-        const fileData = Buffer.from(arrayBuffer);
-
-        // Decrypt file using host's key
+        const fileData = Buffer.from(await file.arrayBuffer());
         const decryptedData = EncryptionUtils.decrypt(fileData, auth.host.key);
-
-        // Determine target host - use X-Host-Name header as target
-        // auth.hostId comes from X-Host-Name, which now can be the target host
         const targetHostId = auth.hostId;
         const targetHostname = auth.host.hostname;
 
-        // Save decrypted file - choose directory based on share flag
         let metadata: FileMetadata;
         if (share) {
-          // Save to files_for_hosts so other hosts can pull it
           metadata = this.fileManager.saveFileForHost(targetHostId, filename, decryptedData, hooks);
           console.log(
-            `[PUSH] Shared ${
-              isDirectory ? "directory" : "file"
-            } for ${targetHostname}: ${filename} (${metadata.size} bytes) - available for pull`
+            `[PUSH] Shared ${isDirectory ? "directory" : "file"} for ${targetHostname}: ${filename} (${metadata.size} bytes) - available for pull`,
           );
         } else {
-          // Save to files_from_hosts (default behavior)
           metadata = this.fileManager.saveFileFromHost(targetHostId, filename, decryptedData, hooks);
           console.log(
-            `[PUSH] Received ${
-              isDirectory ? "directory" : "file"
-            } for ${targetHostname}: ${filename} (${metadata.size} bytes)`
+            `[PUSH] Received ${isDirectory ? "directory" : "file"} for ${targetHostname}: ${filename} (${metadata.size} bytes)`,
           );
         }
 
         metadata.isDirectory = isDirectory;
 
         return this.successResponse({
-          message: `${isDirectory ? "Directory" : "File"} ${
-            share ? "shared" : "received"
-          } successfully`,
+          message: `${isDirectory ? "Directory" : "File"} ${share ? "shared" : "received"} successfully`,
           metadata,
           shared: share,
         });
@@ -525,46 +421,40 @@ export class SoftDeliveryServer extends Server {
       }
     });
 
-    // Status endpoint
-    this.get("/status", (req: Request) => {
+    this.get("/status", () => {
       return new Response(JSON.stringify({ status: "running" }), {
         status: 200,
         headers: { "Content-Type": "application/json" },
       });
     });
 
-    // Pull endpoint - git-style: get list of new files not yet downloaded
     this.post("/pull", async (req: Request) => {
-      // Authenticate host
       const auth = this.authenticateHost(req);
       if (!auth.authenticated || !auth.hostId || !auth.host) {
         return this.errorResponse("Authentication failed", 401);
       }
 
       try {
-        // Get list of files client already has
-        const body = await req.json() as PullRequestBody;
-        const clientFiles = body.clientFiles || []; // Array of stored filenames
-
-        // Get all files available for this host
+        const body = (await req.json()) as PullRequestBody;
+        const clientFiles = body.clientFiles || [];
         const serverFiles = this.fileManager.listFilesWithMetadata(auth.hostId, "for");
-
-        // Find new files that client doesn't have
-        const newFiles = serverFiles.filter((f) => !clientFiles.includes(f.storedName));
+        const newFiles = serverFiles.filter((fileMetadata) => {
+          return !clientFiles.includes(fileMetadata.storedName);
+        });
 
         console.log(
-          `[PULL] ${auth.host.hostname} requesting sync: ${newFiles.length} new files available`
+          `[PULL] ${auth.host.hostname} requesting sync: ${newFiles.length} new files available`,
         );
 
         return this.successResponse({
           totalFiles: serverFiles.length,
-          newFiles: newFiles.map((f) => ({
-            storedName: f.storedName,
-            originalName: f.originalName,
-            size: f.size,
-            timestamp: f.timestamp,
-            isDirectory: f.isDirectory,
-            hooks: f.hooks,
+          newFiles: newFiles.map((fileMetadata) => ({
+            storedName: fileMetadata.storedName,
+            originalName: fileMetadata.originalName,
+            size: fileMetadata.size,
+            timestamp: fileMetadata.timestamp,
+            isDirectory: fileMetadata.isDirectory,
+            hooks: fileMetadata.hooks,
           })),
           count: newFiles.length,
         });
@@ -574,43 +464,35 @@ export class SoftDeliveryServer extends Server {
       }
     });
 
-    // Download specific file endpoint
     this.post("/download", async (req: Request) => {
-      // Authenticate host
       const auth = this.authenticateHost(req);
       if (!auth.authenticated || !auth.hostId || !auth.host) {
         return this.errorResponse("Authentication failed", 401);
       }
 
       try {
-        // Get requested file by stored name
-        const body = await req.json() as DownloadRequestBody;
+        const body = (await req.json()) as DownloadRequestBody;
         const storedName = body.storedName;
 
         if (!storedName) {
           return this.errorResponse("Stored name is required");
         }
 
-        // Verify file belongs to this host
         if (!storedName.startsWith(`${auth.hostId}_`)) {
           return this.errorResponse("Access denied", 403);
         }
 
-        // Get file
         const fileData = this.fileManager.getFileByStoredName(storedName, "for");
-
         if (!fileData) {
           return this.errorResponse("File not found", 404);
         }
 
-        // Encrypt file using host's key
         const encryptedData = EncryptionUtils.encrypt(fileData, auth.host.key);
 
         console.log(
-          `[DOWNLOAD] Sending file to ${auth.host.hostname}: ${storedName} (${encryptedData.length} bytes encrypted)`
+          `[DOWNLOAD] Sending file to ${auth.host.hostname}: ${storedName} (${encryptedData.length} bytes encrypted)`,
         );
 
-        // Return encrypted file
         return new Response(encryptedData, {
           status: 200,
           headers: {
@@ -625,19 +507,16 @@ export class SoftDeliveryServer extends Server {
       }
     });
 
-    // Files listing endpoint
     this.post("/files", async (req: Request) => {
-      // Authenticate host
       const auth = this.authenticateHost(req);
       if (!auth.authenticated || !auth.hostId) {
         return this.errorResponse("Authentication failed", 401);
       }
 
       try {
-        const body = await req.json() as FilesRequestBody;
-        const direction = body.direction || "for"; // 'for' or 'from'
-
-        const files = this.fileManager.listFilesForHost(auth.hostId, direction as "for" | "from");
+        const body = (await req.json()) as FilesRequestBody;
+        const direction = body.direction || "for";
+        const files = this.fileManager.listFilesForHost(auth.hostId, direction);
 
         return this.successResponse({
           hostId: auth.hostId,
@@ -655,17 +534,17 @@ export class SoftDeliveryServer extends Server {
   }
 
   public run(): void {
-    console.log(`🚀 Soft Delivery Server is running on port ${this.config.port}`);
-    console.log(`📦 Host management: storage/delivery_hosts.json`);
-    console.log(`📁 Files from hosts: storage/files_from_hosts/`);
-    console.log(`📁 Files for hosts: storage/files_for_hosts/`);
-    console.log(`\nEndpoints:`);
-    console.log(`  POST /push     - Host uploads encrypted file/directory (zip)`);
-    console.log(`  POST /pull     - Git-style: get list of new files to download`);
-    console.log(`  POST /download - Download specific file by stored name`);
-    console.log(`  POST /files    - List files for host`);
-    console.log(`  GET  /status   - Server status\n`);
+    console.log(`Soft Delivery Server is running on port ${this.config.port}`);
+    console.log("Host management: storage/delivery_hosts.json");
+    console.log("Files from hosts: storage/files_from_hosts/");
+    console.log("Files for hosts: storage/files_for_hosts/");
+    console.log("\nEndpoints:");
+    console.log("  POST /push     - Host uploads encrypted file/directory (zip)");
+    console.log("  POST /pull     - Git-style: get list of new files to download");
+    console.log("  POST /download - Download specific file by stored name");
+    console.log("  POST /files    - List files for host");
+    console.log("  GET  /status   - Server status\n");
 
-    this.runServer();
+    void this.runServer();
   }
 }

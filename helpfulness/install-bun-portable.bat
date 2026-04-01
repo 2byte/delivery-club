@@ -1,8 +1,8 @@
 @echo off
 setlocal enabledelayedexpansion
 
-set RUNTIME_DIR=%~dp0runtime
-set LOG_FILE=%~dp0install-bun.log
+set RUNTIME_DIR=%~dp0..\runtime
+set LOG_FILE=%~dp0..\install-bun.log
 set BUN_VERSION=latest
 
 REM Очищаем лог
