@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "exports": "./mod.ts",
   "imports": {
-    "@2byte/bun-server": "jsr:@2byte/bun-server@^1.0.0"
+    "@2byte/bun-server": "jsr:@2byte/bun-server@^0.1.0"
   },
   "publish": {
     "include": [
