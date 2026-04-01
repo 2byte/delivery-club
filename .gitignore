@@ -15,7 +15,7 @@ local_downloads/
 test-deployment/
 
 # Build outputs
-client
+clientK
 client.exe
 
 # Sync state
