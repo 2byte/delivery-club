@@ -1,5 +1,5 @@
 {
-  "name": "@2byte/delivery-club-server",
+  "name": "@delivery-club/server",
   "version": "0.1.0",
   "exports": "./mod.ts",
   "imports": {
