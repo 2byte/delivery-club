@@ -7,7 +7,7 @@ This package exposes the reusable server library from the monorepo. Application 
 ## JSR
 
 ```ts
-import { SoftDeliveryServer } from "jsr:@2byte/delivery-club-server";
+import { SoftDeliveryServer } from "jsr:@delivery-club/server";
 ```
 
 ## Runtime Notes
