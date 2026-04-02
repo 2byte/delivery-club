@@ -1,6 +1,6 @@
 {
   "name": "@delivery-club/server",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "exports": "./mod.ts",
   "imports": {
     "@2byte/bun-server": "jsr:@2byte/bun-server@^0.1.0"

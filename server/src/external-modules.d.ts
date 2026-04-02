@@ -9,7 +9,7 @@ declare module "@2byte/bun-server" {
     hostname?: string;
   }
 
-  export class Server {
+  export class BunServerWrapper {
     constructor(options?: ServerOptions);
     get(path: string, handler: RouteHandler): void;
     post(path: string, handler: RouteHandler): void;
@@ -19,9 +19,4 @@ declare module "@2byte/bun-server" {
     start(): void;
     stop(): void;
   }
-}
-
-declare module "npm:jszip" {
-  const JSZip: any;
-  export default JSZip;
 }

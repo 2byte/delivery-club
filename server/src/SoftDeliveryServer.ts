@@ -9,7 +9,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { join } from "node:path";
-import { Server } from "@2byte/bun-server";
+import { BunServerWrapper } from "@2byte/bun-server";
 import { DatabaseFile } from "./DatabaseFile.ts";
 
 export interface DeliveryHost {
@@ -277,7 +277,7 @@ class EncryptionUtils {
   }
 }
 
-export class SoftDeliveryServer extends Server {
+export class SoftDeliveryServer extends BunServerWrapper {
   private hostManager: SoftDeliveryHost;
   private fileManager: DeliveryFile;
 

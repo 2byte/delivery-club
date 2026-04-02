@@ -15,11 +15,11 @@
   },
   "devDependencies": {
     "@types/bun": "latest",
-    "@types/node": "^25.0.3",
-    "bun-types": "^1.3.5"
+    "@types/node": "latest",
+    "bun-types": "latest"
   },
   "dependencies": {
-    "@types/bun": "^1.3.5",
+    "@types/bun": "latest",
     "readable-stream": "^4.7.0"
   },
   "module": "server/index.ts",

@@ -85,7 +85,7 @@ export class ServerScaffoldGenerator {
 
   private getIndexTemplate(): string {
     return [
-      'import { SoftDeliveryServer } from "jsr:@2byte/delivery-club-server";',
+      'import { SoftDeliveryServer } from "@delivery-club/server";',
       "",
       "const server = new SoftDeliveryServer({",
       '  hostname: import.meta.env.HOST_ADDRESS || "0.0.0.0",',
