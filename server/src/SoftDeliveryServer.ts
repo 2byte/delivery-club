@@ -1,7 +1,6 @@
 import { createCipheriv, createDecipheriv, createHash, randomBytes } from "node:crypto";
 import {
   existsSync,
-  lstatSync,
   mkdirSync,
   readFileSync,
   readdirSync,
@@ -495,6 +494,7 @@ export class SoftDeliveryServer extends BunServerWrapper {
       }
     });
 
+    this.maxRequestBodySize(500 * 1024 * 1024); // 500MB
     this.start();
   }
 

@@ -1,12 +1,12 @@
 {
   "name": "@delivery-club/server",
-  "version": "0.1.5",
+  "version": "0.1.6",
   "exports": {
     ".": "./mod.ts",
     "./cli": "./deliverierCli.ts"
   },
   "imports": {
-    "@2byte/bun-server": "jsr:@2byte/bun-server@^0.1.0"
+    "@2byte/bun-server": "jsr:@2byte/bun-server@^0.1.1"
   },
   "publish": {
     "include": [

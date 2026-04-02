@@ -7,7 +7,7 @@ Cross-platform TypeScript client for pushing and pulling encrypted files and dir
 Three deployment modes are available. Use the CLI to scaffold a ready-to-use setup:
 
 ```bash
-bunx jsr:@delivery-club/client/cli init --help
+bun ./node_modules/@delivery-club/client/clientCli.ts init --help
 ```
 
 ---
@@ -17,7 +17,7 @@ bunx jsr:@delivery-club/client/cli init --help
 Suitable when Bun is already installed on the target machine.
 
 ```bash
-bunx jsr:@delivery-club/client/cli init --mode ts \
+bun ./node_modules/@delivery-club/client/clientCli.ts init --mode ts \
   --dir ./my-client \
   --server-url http://10.0.0.1:3004 \
   --hostname host_1
@@ -53,13 +53,13 @@ Suitable for machines with no runtime. Client runs as a native binary.
 
 ```bash
 # Build for Windows
-bunx jsr:@delivery-club/client/cli build --outfile ./deploy/client.exe
+bun ./node_modules/@delivery-club/client/clientCli.ts build --outfile ./deploy/client.exe
 
 # Cross-compile for Linux
-bunx jsr:@delivery-club/client/cli build --target linux --outfile ./deploy/client
+bun ./node_modules/@delivery-club/client/clientCli.ts build --target linux --outfile ./deploy/client
 
 # Cross-compile for macOS (Apple Silicon)
-bunx jsr:@delivery-club/client/cli build --target mac-arm --outfile ./deploy/client
+bun ./node_modules/@delivery-club/client/clientCli.ts build --target mac-arm --outfile ./deploy/client
 ```
 
 Available `--target` values: `windows`, `linux`, `mac`, `mac-arm`
@@ -67,7 +67,7 @@ Available `--target` values: `windows`, `linux`, `mac`, `mac-arm`
 **Step 2 — scaffold the deployment directory:**
 
 ```bash
-bunx jsr:@delivery-club/client/cli init --mode exe \
+bun ./node_modules/@delivery-club/client/clientCli.ts init --mode exe \
   --dir ./deploy \
   --server-url http://10.0.0.1:3004 \
   --hostname host_1
@@ -102,7 +102,7 @@ For scheduled tasks or background use — call `run-silent.vbs` instead.
 Zero prerequisites — downloads a portable Bun runtime on the first run.
 
 ```bash
-bunx jsr:@delivery-club/client/cli init --mode ts-portable \
+bun ./node_modules/@delivery-club/client/clientCli.ts init --mode ts-portable \
   --dir ./my-client \
   --server-url http://10.0.0.1:3004 \
   --hostname host_1

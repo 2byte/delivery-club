@@ -21,13 +21,14 @@
     "bun-types": "latest"
   },
   "dependencies": {
+    "@2byte/bun-server": "npm:@jsr/2byte__bun-server@^0.1.0",
     "@types/bun": "latest",
     "readable-stream": "^4.7.0"
   },
   "module": "server/index.ts",
   "private": true,
   "peerDependencies": {
-    "typescript": "^5"
+    "typescript": "^5.9.3"
   },
   "prettier": {
     "tabWidth": 4
