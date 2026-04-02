@@ -34,7 +34,7 @@ It uses:
 ## Example
 
 ```ts
-import { SoftDeliveryServer } from "jsr:@2byte/delivery-club-server";
+import { SoftDeliveryServer } from "jsr:@delivery-club/server";
 
 const server = new SoftDeliveryServer({
   hostname: "0.0.0.0",
@@ -60,7 +60,7 @@ bun run deliverierCli.ts init --dir ./server-app
 You can also generate bootstrap files programmatically:
 
 ```ts
-import { ServerScaffoldGenerator } from "jsr:@2byte/delivery-club-server";
+import { ServerScaffoldGenerator } from "jsr:@delivery-club/server";
 
 const generator = new ServerScaffoldGenerator();
 
