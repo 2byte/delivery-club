@@ -1,5 +1,7 @@
 #!/usr/bin/env bun
 
+import { existsSync } from "node:fs";
+import { join, resolve } from "node:path";
 import { ClientScaffoldGenerator } from "./src/ClientScaffoldGenerator.ts";
 import type { ScaffoldMode } from "./src/ClientScaffoldGenerator.ts";
 
@@ -16,7 +18,7 @@ class DeliveryClientCli {
     this.scaffoldGenerator = new ClientScaffoldGenerator();
   }
 
-  public run(argv: string[]): void {
+  public async run(argv: string[]): Promise<void> {
     const parsed = this.parseCliArgs(argv);
 
     if (!parsed.command || parsed.command === "help") {
@@ -27,6 +29,9 @@ class DeliveryClientCli {
     switch (parsed.command) {
       case "init":
         this.initClient(parsed.options);
+        return;
+      case "build":
+        await this.buildClient(parsed.options);
         return;
       default:
         this.exitWithError(`Unknown command: ${parsed.command}`);
@@ -42,6 +47,7 @@ Usage:
 
 Commands:
   init        Scaffold client deployment files in a directory
+  build       Compile client.ts to a standalone executable
   help        Show this help message
 
 Init options:
@@ -54,11 +60,21 @@ Init options:
   --hostname <name>       Pre-fill hostname in config (default: my-host)
   --force                 Overwrite existing files
 
+Build options:
+  --outfile <path>        Output executable path (default: ./client.exe on Windows, ./client elsewhere)
+  --target <target>       Build target platform (default: current platform)
+                          windows     bun-windows-x64
+                          linux       bun-linux-x64
+                          mac         bun-darwin-x64
+                          mac-arm     bun-darwin-arm64
+
 Examples:
   bun clientCli.ts init
   bun clientCli.ts init --mode ts --dir ./client-app
   bun clientCli.ts init --mode exe --dir ./deploy --server-url http://10.0.0.1:3004 --hostname host_1
   bun clientCli.ts init --mode ts-portable --dir ./portable-client --force
+  bun clientCli.ts build --outfile ./deploy/client.exe
+  bun clientCli.ts build --target linux --outfile ./deploy/client
 `);
   }
 
@@ -154,6 +170,60 @@ Examples:
     console.log();
   }
 
+  private async buildClient(options: Record<string, string | boolean>): Promise<void> {
+    const rawTarget = typeof options.target === "string" ? options.target : undefined;
+    const bunTarget = this.resolveBunTarget(rawTarget);
+
+    const isWindows = rawTarget === "windows" || (!rawTarget && process.platform === "win32");
+    const defaultOutfile = isWindows ? "client.exe" : "client";
+    const outfile = resolve(typeof options.outfile === "string" ? options.outfile : defaultOutfile);
+
+    // client.ts lives next to clientCli.ts in the JSR package
+    const clientEntryPath = join(import.meta.dirname, "client.ts");
+
+    if (!existsSync(clientEntryPath)) {
+      this.exitWithError(`client.ts not found at: ${clientEntryPath}`);
+    }
+
+    const args = ["build", clientEntryPath, "--compile", `--outfile=${outfile}`];
+    if (rawTarget) {
+      args.push(`--target=${bunTarget}`);
+    }
+
+    console.log("Building delivery client executable...");
+    console.log(`  Source: ${clientEntryPath}`);
+    console.log(`  Output: ${outfile}`);
+    if (rawTarget) {
+      console.log(`  Target: ${bunTarget}`);
+    }
+    console.log();
+
+    const proc = Bun.spawn(["bun", ...args], {
+      stdout: "inherit",
+      stderr: "inherit",
+      stdin: "inherit",
+    });
+
+    const exitCode = await proc.exited;
+    if (exitCode !== 0) {
+      this.exitWithError(`Build failed with exit code ${exitCode}`);
+    }
+
+    console.log(`\nBuild successful: ${outfile}`);
+  }
+
+  private resolveBunTarget(target: string | undefined): string {
+    switch (target) {
+      case "windows": return "bun-windows-x64";
+      case "linux":   return "bun-linux-x64";
+      case "mac":
+      case "macos":   return "bun-darwin-x64";
+      case "mac-arm":
+      case "macos-arm": return "bun-darwin-arm64";
+      default: return "bun";
+    }
+  }
+
   private exitWithError(message: string): never {
     console.error(`Error: ${message}`);
     console.error('Run "bun clientCli.ts help" for usage.');
@@ -162,4 +232,7 @@ Examples:
 }
 
 const cli = new DeliveryClientCli();
-cli.run(process.argv);
+cli.run(process.argv).catch((e) => {
+  console.error(`Fatal error: ${e}`);
+  process.exit(1);
+});
