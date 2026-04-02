@@ -1,6 +1,6 @@
 {
   "name": "@delivery-club/server",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "exports": "./mod.ts",
   "imports": {
     "@2byte/bun-server": "jsr:@2byte/bun-server@^0.1.0"
@@ -14,5 +14,8 @@
       "src/**/*.ts"
     ]
   },
-  "license": "MIT"
+  "license": "MIT",
+  "bin": {
+    "deliverierCli": "./deliverierCli.ts"
+  }
 }
