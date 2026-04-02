@@ -48,13 +48,20 @@ server.run();
 
 The package includes a Bun CLI for host management and quick consumer bootstrap generation.
 
-```bash
-# Manage hosts database
-bun run deliverierCli.ts list
-bun run deliverierCli.ts add --name "host-1" --hostname "host-1.local" --encryption "AES-256" --key "secret"
+### First-time bootstrap (before `package.json` exists)
 
-# Generate .env, .env.example and index.ts for a consumer app
-bun run deliverierCli.ts init --dir ./server-app
+```bash
+bunx jsr add @delivery-club/server
+bun node_modules/@delivery-club/server/deliverierCli.ts init
+bun install
+```
+
+After `init`, the generated `package.json` provides short aliases:
+
+```bash
+bun run cli -- list
+bun run cli -- add --name "host-1" --hostname "host-1.local" --encryption "AES-256" --key "secret"
+bun run start
 ```
 
 You can also generate bootstrap files programmatically:
