@@ -8,6 +8,8 @@
     "server:cli": "bun run server/deliverierCli.ts",
     "server:init": "bun run server/deliverierCli.ts init",
     "client": "bun run client/client.ts",
+    "client:cli": "bun run client/clientCli.ts",
+    "client:init": "bun run client/clientCli.ts init",
     "build:client": "bun build client/client.ts --outfile client/dist/client.ts --target=bun",
     "build:client:win": "bun build client/client.ts --compile --outfile client/dist/client.exe",
     "build:client:linux": "bun build client/client.ts --compile --target=bun-linux-x64 --outfile client/dist/client",
