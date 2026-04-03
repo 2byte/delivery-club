@@ -2,6 +2,10 @@
 
 Cross-platform TypeScript client for pushing and pulling encrypted files and directory archives.
 
+
+## Telegram channel
+A Telegram channel with interesting software [https://t.me/ithubcoding](https://t.me/ithubcoding)
+
 ## Deployment
 
 Three deployment modes are available. Use the CLI to scaffold a ready-to-use setup:
