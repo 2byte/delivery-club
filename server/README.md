@@ -4,6 +4,9 @@ Bun-based TypeScript server for receiving, storing, and serving encrypted file d
 
 This package exposes the reusable server library from the monorepo. Application bootstrap and environment-specific files stay outside the JSR package.
 
+## Telegram channel
+A Telegram channel with interesting software [https://t.me/ithubcoding](https://t.me/ithubcoding)
+
 ## JSR
 
 ```ts

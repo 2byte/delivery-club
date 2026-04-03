@@ -1,6 +1,6 @@
 {
   "name": "@delivery-club/server",
-  "version": "0.1.7",
+  "version": "0.1.8",
   "exports": {
     ".": "./mod.ts",
     "./cli": "./deliverierCli.ts"
