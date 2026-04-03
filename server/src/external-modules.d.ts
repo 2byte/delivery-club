@@ -18,5 +18,6 @@ declare module "@2byte/bun-server" {
     patch(path: string, handler: RouteHandler): void;
     start(): void;
     stop(): void;
+    maxRequestBodySize(bytes: number): void;
   }
 }
