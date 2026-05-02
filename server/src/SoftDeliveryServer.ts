@@ -599,12 +599,11 @@ export class SoftDeliveryServer extends BunServerWrapper {
           return this.errorResponse("Host not found", 404);
         }
 
-        const encryptedFileData = this.fileManager.getFileByStoredName(tokenData.storedName, "for");
-        if (!encryptedFileData) {
+        const fileData = this.fileManager.getFileByStoredName(tokenData.storedName, "for");
+        
+        if (!fileData) {
           return this.errorResponse("File not found", 404);
         }
-
-        const fileData = EncryptionUtils.decrypt(encryptedFileData, host.key);
 
         console.log(`[LINK] Token download: ${tokenData.originalName} (${fileData.length} bytes)`);
 
