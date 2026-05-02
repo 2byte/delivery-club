@@ -22,24 +22,29 @@ Soft Delivery Client - Production Version
 Usage: bun client.ts <command> [options]
 
 Commands:
-  status              Check server status
-  push <path>         Push file or directory to server
-  push <path> --share Share file with other hosts (available for pull)
-  push <path> --target-host <hostname>  Push to specific host
-  pull                Pull new files from server (git-style)
-  list [for|from]     List files on server
-  sync-status         Show local sync status
-  sync-reset          Reset sync state
-  
+  status                              Check server status
+  push <path>                         Push file or directory to server (shared by default)
+  push <path> --no-share              Upload without sharing (stored only, not pullable)
+  push <path> --create-link           Create a permanent download link after upload
+  push <path> --target-host <host>    Push to specific host
+  pull                                Pull new shared files from server (git-style)
+  pull-link <token|url>               Download file by permanent link token or URL
+  list [for|from]                     List files on server
+  sync-status                         Show local sync status
+  sync-reset                          Reset sync state
+
 Environment Variables:
   CLIENT_CONFIG       Path to config file (default: ./client.config.json)
 
 Examples:
   bun client.ts push ./myfile.txt
-  bun client.ts push ./myfolder        # Will zip directory
-  bun client.ts push ./myfile.txt --share  # Share with other hosts
-  bun client.ts push ./myfile.txt --target-host host_2  # Push to host_2
+  bun client.ts push ./myfolder                          # Zips and shares directory
+  bun client.ts push ./myfile.txt --no-share             # Store only, not pullable
+  bun client.ts push ./myfile.txt --create-link          # Returns a permanent download URL
+  bun client.ts push ./myfile.txt --target-host host_2
   bun client.ts pull
+  bun client.ts pull-link eyJhb...                       # Download by token
+  bun client.ts pull-link http://server:3004/link?token=eyJhb...
   bun client.ts sync-status
         `);
     process.exit(0);
@@ -55,26 +60,39 @@ Examples:
 
       case "push":
         if (args.length < 2 || !args[1]) {
-          console.error("❌ Usage: push <filepath> [--share] [--target-host <hostname>]");
+          console.error("Usage: push <filepath> [--no-share] [--create-link] [--target-host <hostname>]");
           process.exit(1);
         }
-        const share = args.includes("--share");
+        const share = !args.includes("--no-share");
+        const createLink = args.includes("--create-link");
         const targetHostIndex = args.indexOf("--target-host");
         const targetHost =
           targetHostIndex !== -1 && args[targetHostIndex + 1]
             ? args[targetHostIndex + 1]
             : undefined;
         const customFilename = args[2] && !args[2].startsWith("--") ? args[2] : undefined;
-        await client.push(
+        const pushResult = await client.push(
           args[1],
           customFilename as string | undefined,
           share,
-          targetHost as string | undefined
+          targetHost as string | undefined,
+          createLink
         );
+        if (pushResult.linkUrl) {
+          console.log(`\nDownload link: ${pushResult.linkUrl}`);
+        }
         break;
 
       case "pull":
         await client.pull();
+        break;
+
+      case "pull-link":
+        if (!args[1]) {
+          console.error("Usage: pull-link <token|url>");
+          process.exit(1);
+        }
+        await client.pullByLink(args[1]);
         break;
 
       case "list":
@@ -91,11 +109,11 @@ Examples:
         break;
 
       default:
-        console.error(`❌ Unknown command: ${command}`);
+        console.error(`Unknown command: ${command}`);
         process.exit(1);
     }
   } catch (error) {
-    console.error(`❌ Fatal error: ${error}`);
+    console.error(`Fatal error: ${error}`);
     process.exit(1);
   }
 }

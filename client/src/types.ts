@@ -43,6 +43,17 @@ export interface ClientConfig {
 }
 
 /**
+ * Result returned from push operation
+ */
+export interface PushResult {
+  success: boolean;
+  /** Token for permanent download link (present when --create-link was used) */
+  linkToken?: string;
+  /** Full URL of the permanent download link */
+  linkUrl?: string;
+}
+
+/**
  * Sync state to track downloaded files
  */
 export interface SyncState {

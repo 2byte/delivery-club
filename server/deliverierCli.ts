@@ -2,10 +2,14 @@
 
 import { ServerScaffoldGenerator } from "./src/ServerScaffoldGenerator.ts";
 import { DatabaseFile } from "./src/DatabaseFile.ts";
-import type { DeliveryHost } from "./src/SoftDeliveryServer.ts";
+import type { DeliveryHost, TempAuthToken } from "./src/SoftDeliveryServer.ts";
 
 interface DeliveryHostsDB {
   [hostId: string]: DeliveryHost;
+}
+
+interface TempAuthTokensDB {
+  [token: string]: TempAuthToken;
 }
 
 interface CliParseResult {
@@ -16,11 +20,14 @@ interface CliParseResult {
 
 class DeliveryHostsCli {
   private static readonly DB_PATH = "./storage/delivery_hosts.json";
+  private static readonly TOKENS_DB_PATH = "./storage/host_temp_auth_tokens.json";
   private db: DatabaseFile<DeliveryHostsDB>;
+  private tokensDb: DatabaseFile<TempAuthTokensDB>;
   private scaffoldGenerator: ServerScaffoldGenerator;
 
   constructor() {
     this.db = new DatabaseFile<DeliveryHostsDB>(DeliveryHostsCli.DB_PATH, {});
+    this.tokensDb = new DatabaseFile<TempAuthTokensDB>(DeliveryHostsCli.TOKENS_DB_PATH, {});
     this.scaffoldGenerator = new ServerScaffoldGenerator();
   }
 
@@ -48,6 +55,12 @@ class DeliveryHostsCli {
       case "delete":
         this.deleteHost(this.requireHostId(parsed.positional, "delete"));
         return;
+      case "list-links":
+        this.listLinks(parsed.positional[0]);
+        return;
+      case "revoke-link":
+        this.revokeLink(parsed.positional[0]);
+        return;
       case "init":
         this.initConsumer(parsed.options);
         return;
@@ -69,6 +82,8 @@ Commands:
   get <id>                      Get details of a specific host
   update <id>                   Update an existing host
   delete <id>                   Delete a host
+  list-links [hostId]           List all permanent download link tokens (optionally filter by host)
+  revoke-link <token>           Revoke a permanent download link token
   init                          Generate consumer bootstrap files (.env, .env.example, index.ts)
   help                          Show this help message
 
@@ -86,6 +101,9 @@ Init options:
 
 Examples:
   bun deliverierCli.ts add --name "Production" --hostname "prod.example.com" --encryption "AES-256" --key "secret123"
+  bun deliverierCli.ts list-links
+  bun deliverierCli.ts list-links host_1
+  bun deliverierCli.ts revoke-link abc123def456...
   bun deliverierCli.ts init --dir ./server-app
   bun deliverierCli.ts init --dir ./server-app --force --host-port 8080
 `);
@@ -279,6 +297,57 @@ Examples:
         console.log(`  - ${filePath}`);
       }
     }
+  }
+
+  private listLinks(hostIdFilter?: string): void {
+    const tokens = this.tokensDb.getAll() as Record<string, TempAuthToken>;
+    const entries = Object.entries(tokens).filter(([, data]) =>
+      hostIdFilter ? data.hostId === hostIdFilter : true,
+    );
+
+    if (entries.length === 0) {
+      console.log(
+        hostIdFilter
+          ? `No download links found for host '${hostIdFilter}'.`
+          : "No download links found.",
+      );
+      return;
+    }
+
+    const label = hostIdFilter ? ` for host '${hostIdFilter}'` : "";
+    console.log(`\nDownload links${label} (${entries.length} total):`);
+    for (const [token, data] of entries) {
+      const status = data.revoked ? "[REVOKED]" : "[active]";
+      console.log(`\n  Token:    ${token}`);
+      console.log(`  Host:     ${data.hostId}`);
+      console.log(`  File:     ${data.originalName}`);
+      console.log(`  Stored:   ${data.storedName}`);
+      console.log(`  Created:  ${this.formatDate(data.createdAt)}`);
+      console.log(`  Status:   ${status}`);
+    }
+    console.log();
+  }
+
+  private revokeLink(token: string | undefined): void {
+    if (!token) {
+      this.exitWithError("Token is required. Usage: revoke-link <token>");
+    }
+
+    const allTokens = this.tokensDb.getAll() as Record<string, TempAuthToken | undefined>;
+    const tokenData = allTokens[token];
+    if (!tokenData) {
+      this.exitWithError(`Token '${token}' not found.`);
+    }
+
+    if (tokenData.revoked) {
+      console.log(`Token '${token}' is already revoked.`);
+      return;
+    }
+
+    this.tokensDb.set(token, { ...tokenData, revoked: true });
+    console.log(`Successfully revoked link token: ${token}`);
+    console.log(`  File: ${tokenData.originalName}`);
+    console.log(`  Host: ${tokenData.hostId}`);
   }
 
   private requireHostId(positional: string[], commandName: string): string {

@@ -2,7 +2,7 @@ import { readFileSync, writeFileSync, existsSync, mkdirSync, statSync } from "no
 import { join, basename, dirname } from "node:path";
 import { Logger } from "./Logger.ts";
 import { EncryptionUtils } from "./EncriptionUtils.ts";
-import type { ClientConfig, SyncState, PullResponse, ListResponse, StatusResponse, ClientFileHooks, ClientRemoteHooks } from "./types.ts";
+import type { ClientConfig, SyncState, PullResponse, ListResponse, StatusResponse, ClientFileHooks, ClientRemoteHooks, PushResult } from "./types.ts";
 import { ZipArchive } from "./ZipArchive.ts";
 import type { HookOnDownloadName } from "./types.ts";
 
@@ -109,14 +109,15 @@ export class DeliveryClient {
   async push(
     filePath: string,
     customFilename: string | undefined = undefined,
-    share: boolean = false,
-    targetHostname: string | undefined = undefined
-  ): Promise<boolean> {
+    share: boolean = true,
+    targetHostname: string | undefined = undefined,
+    createLink: boolean = false
+  ): Promise<PushResult> {
     const targetHost = targetHostname || this.config.hostname;
     this.logger.info(
-      `Starting push: ${filePath}${share ? " (shared mode)" : ""}${
+      `Starting push: ${filePath}${share ? " (shared)" : " (stored only)"}${
         targetHostname ? ` to host: ${targetHostname}` : ""
-      }`
+      }${createLink ? " [create-link]" : ""}`
     );
 
     try {
@@ -143,7 +144,7 @@ export class DeliveryClient {
         }
       } else {
         this.logger.error(`Path not found: ${filePath}`);
-        return false;
+        return { success: false };
       }
 
       this.logger.info(`Original size: ${fileData.length} bytes`);
@@ -158,6 +159,9 @@ export class DeliveryClient {
       formData.append("filename", filename);
       formData.append("isDirectory", isDirectory.toString());
       formData.append("share", share.toString());
+      if (createLink) {
+        formData.append("createLink", "true");
+      }
 
       // Check if we have remoteHooks for the target host
       if (this.config.remoteHooks) {
@@ -179,21 +183,32 @@ export class DeliveryClient {
         verbose: this.config.silentMode ? false : true,
       });
 
-      const result = await response.json();
+      const result = await response.json() as {
+        message?: string;
+        shared?: boolean;
+        linkToken?: string;
+        linkPath?: string;
+        error?: string;
+      };
 
       if (response.ok) {
         this.logger.success(`File ${share ? "shared" : "pushed"} successfully: ${filename}`);
         if (share) {
           this.logger.info("File is now available for other hosts to pull");
         }
-        return true;
+        if (result.linkToken && result.linkPath) {
+          const linkUrl = `${this.config.serverUrl}${result.linkPath}`;
+          this.logger.success(`Download link created: ${linkUrl}`);
+          return { success: true, linkToken: result.linkToken, linkUrl };
+        }
+        return { success: true };
       } else {
         this.logger.error(`Push failed: ${JSON.stringify(result)}`);
-        return false;
+        return { success: false };
       }
     } catch (error) {
       this.logger.error(`Push error: server url ${this.config.serverUrl} - ${error}`);
-      return false;
+      return { success: false };
     }
   }
 
@@ -319,6 +334,49 @@ export class DeliveryClient {
     } catch (error) {
       this.logger.error(`Pull error: ${error}`);
       return 0;
+    }
+  }
+
+  /**
+   * Download a file by a permanent link token or full link URL.
+   * The server decrypts the file before serving, so no authKey is needed.
+   */
+  async pullByLink(tokenOrUrl: string): Promise<boolean> {
+    const linkUrl = tokenOrUrl.startsWith("http")
+      ? tokenOrUrl
+      : `${this.config.serverUrl}/link?token=${tokenOrUrl}`;
+
+    this.logger.info(`Downloading by link: ${linkUrl}`);
+
+    try {
+      const response = await fetch(linkUrl);
+
+      if (!response.ok) {
+        const body = await response.text();
+        this.logger.error(`Link download failed (${response.status}): ${body}`);
+        return false;
+      }
+
+      const originalName: string =
+        response.headers.get("X-Original-Name") ||
+        (() => {
+          const cd = response.headers.get("Content-Disposition") || "";
+          const match = /filename="([^"]+)"/.exec(cd);
+          return match ? match[1] : "downloaded_file";
+        })() ||
+        "downloaded_file";
+
+      const fileData = Buffer.from(await response.arrayBuffer());
+      const destinationPath = join(this.config.localStorageDir, originalName);
+
+      this.ensureDirectoryExists(this.config.localStorageDir);
+      writeFileSync(destinationPath, fileData);
+
+      this.logger.success(`Saved: ${destinationPath} (${fileData.length} bytes)`);
+      return true;
+    } catch (error) {
+      this.logger.error(`Link download error: ${error}`);
+      return false;
     }
   }
 

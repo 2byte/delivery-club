@@ -11,6 +11,18 @@ import { join } from "node:path";
 import { BunServerWrapper } from "@2byte/bun-server";
 import { DatabaseFile } from "./DatabaseFile.ts";
 
+export interface TempAuthToken {
+  hostId: string;
+  storedName: string;
+  originalName: string;
+  createdAt: string;
+  revoked: boolean;
+}
+
+interface TempAuthTokensDB {
+  [token: string]: TempAuthToken;
+}
+
 export interface DeliveryHost {
   name: string;
   hostname: string;
@@ -44,6 +56,10 @@ interface DownloadRequestBody {
 
 interface FilesRequestBody {
   direction?: "for" | "from";
+}
+
+interface RevokeRequestBody {
+  token: string;
 }
 
 export interface FileMetadata {
@@ -96,38 +112,89 @@ export class SoftDeliveryHost {
   }
 }
 
+export class TempAuthTokensManager {
+  private db: DatabaseFile<TempAuthTokensDB>;
+  private static readonly DB_PATH = "./storage/host_temp_auth_tokens.json";
+
+  constructor() {
+    this.db = new DatabaseFile<TempAuthTokensDB>(TempAuthTokensManager.DB_PATH, {});
+  }
+
+  public createToken(hostId: string, storedName: string, originalName: string): string {
+    const token = randomBytes(32).toString("hex");
+    this.db.set(token, {
+      hostId,
+      storedName,
+      originalName,
+      createdAt: new Date().toISOString(),
+      revoked: false,
+    });
+    return token;
+  }
+
+  public getToken(token: string): TempAuthToken | undefined {
+    return this.db.get(token);
+  }
+
+  public revokeToken(token: string): boolean {
+    const tokenData = this.db.get(token);
+    if (!tokenData) return false;
+    this.db.set(token, { ...tokenData, revoked: true });
+    return true;
+  }
+
+  public getTokensForHost(hostId: string): Record<string, TempAuthToken> {
+    const all = this.db.getAll() as Record<string, TempAuthToken>;
+    const result: Record<string, TempAuthToken> = {};
+    for (const [token, data] of Object.entries(all)) {
+      if (data.hostId === hostId) {
+        result[token] = data;
+      }
+    }
+    return result;
+  }
+}
+
 export class DeliveryFile {
-  private static readonly FILES_FOR_HOSTS_DIR = "./storage/files_for_hosts";
-  private static readonly FILES_FROM_HOSTS_DIR = "./storage/files_from_hosts";
+  /** Files shared for pull/download by the host */
+  private static readonly FILES_SHARED_DIR = "./storage/files_shared";
+  /** Files received from the host, stored only (no pull) */
+  private static readonly FILES_RECEIVED_DIR = "./storage/files_received";
 
   constructor() {
     this.ensureDirectories();
   }
 
   private ensureDirectories(): void {
-    if (!existsSync(DeliveryFile.FILES_FOR_HOSTS_DIR)) {
-      mkdirSync(DeliveryFile.FILES_FOR_HOSTS_DIR, { recursive: true });
+    if (!existsSync(DeliveryFile.FILES_SHARED_DIR)) {
+      mkdirSync(DeliveryFile.FILES_SHARED_DIR, { recursive: true });
     }
 
-    if (!existsSync(DeliveryFile.FILES_FROM_HOSTS_DIR)) {
-      mkdirSync(DeliveryFile.FILES_FROM_HOSTS_DIR, { recursive: true });
+    if (!existsSync(DeliveryFile.FILES_RECEIVED_DIR)) {
+      mkdirSync(DeliveryFile.FILES_RECEIVED_DIR, { recursive: true });
     }
+  }
+
+  private getDir(direction: "for" | "from"): string {
+    return direction === "for" ? DeliveryFile.FILES_SHARED_DIR : DeliveryFile.FILES_RECEIVED_DIR;
   }
 
   private generateStorageFilename(hostId: string, originalFilename: string): string {
     const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
     const cleanFilename = originalFilename.replace(/[^a-zA-Z0-9._-]/g, "_");
-    return `${hostId}_${cleanFilename}_${timestamp}`;
+    const extension = cleanFilename.includes(".") ? cleanFilename.substring(cleanFilename.lastIndexOf(".")) : "";
+    return `${hostId}_${cleanFilename}_${timestamp}${extension}`;
   }
 
-  public saveFileFromHost(
+  /** Save file received from host (stored only, not available for pull) */
+  public saveReceivedFile(
     hostId: string,
     filename: string,
     data: Buffer,
     hooks?: ClientFileHooks,
   ): FileMetadata {
     const storedName = this.generateStorageFilename(hostId, filename);
-    const filePath = join(DeliveryFile.FILES_FROM_HOSTS_DIR, storedName);
+    const filePath = join(DeliveryFile.FILES_RECEIVED_DIR, storedName);
 
     writeFileSync(filePath, data);
 
@@ -146,14 +213,15 @@ export class DeliveryFile {
     };
   }
 
-  public saveFileForHost(
+  /** Save shared file available for pull/download by the host */
+  public saveSharedFile(
     hostId: string,
     filename: string,
     data: Buffer,
     hooks?: ClientFileHooks,
   ): FileMetadata {
     const storedName = this.generateStorageFilename(hostId, filename);
-    const filePath = join(DeliveryFile.FILES_FOR_HOSTS_DIR, storedName);
+    const filePath = join(DeliveryFile.FILES_SHARED_DIR, storedName);
 
     writeFileSync(filePath, data);
 
@@ -172,8 +240,8 @@ export class DeliveryFile {
     };
   }
 
-  public getFileForHost(hostId: string, filename: string): Buffer | null {
-    const files = readdirSync(DeliveryFile.FILES_FOR_HOSTS_DIR);
+  public getSharedFile(hostId: string, filename: string): Buffer | null {
+    const files = readdirSync(DeliveryFile.FILES_SHARED_DIR);
     const matchingFile = files.find((fileName) => {
       return fileName.startsWith(`${hostId}_`) && fileName.includes(filename);
     });
@@ -182,19 +250,16 @@ export class DeliveryFile {
       return null;
     }
 
-    return readFileSync(join(DeliveryFile.FILES_FOR_HOSTS_DIR, matchingFile));
+    return readFileSync(join(DeliveryFile.FILES_SHARED_DIR, matchingFile));
   }
 
   public listFilesForHost(hostId: string, directory: "for" | "from" = "for"): string[] {
-    const dir =
-      directory === "for" ? DeliveryFile.FILES_FOR_HOSTS_DIR : DeliveryFile.FILES_FROM_HOSTS_DIR;
-
+    const dir = this.getDir(directory);
     return readdirSync(dir).filter((fileName) => fileName.startsWith(`${hostId}_`));
   }
 
   public listFilesWithMetadata(hostId: string, directory: "for" | "from" = "for"): FileMetadata[] {
-    const dir =
-      directory === "for" ? DeliveryFile.FILES_FOR_HOSTS_DIR : DeliveryFile.FILES_FROM_HOSTS_DIR;
+    const dir = this.getDir(directory);
 
     const hostFiles = readdirSync(dir).filter((fileName) => {
       return fileName.startsWith(`${hostId}_`) && !fileName.endsWith(".hooks.json");
@@ -220,8 +285,7 @@ export class DeliveryFile {
   }
 
   public getFileByStoredName(storedName: string, directory: "for" | "from" = "for"): Buffer | null {
-    const dir =
-      directory === "for" ? DeliveryFile.FILES_FOR_HOSTS_DIR : DeliveryFile.FILES_FROM_HOSTS_DIR;
+    const dir = this.getDir(directory);
     const filePath = join(dir, storedName);
 
     if (!existsSync(filePath)) {
@@ -235,8 +299,7 @@ export class DeliveryFile {
     storedName: string,
     directory: "for" | "from" = "for",
   ): ClientFileHooks | null {
-    const dir =
-      directory === "for" ? DeliveryFile.FILES_FOR_HOSTS_DIR : DeliveryFile.FILES_FROM_HOSTS_DIR;
+    const dir = this.getDir(directory);
     const hooksFilePath = join(dir, `${storedName}.hooks.json`);
 
     if (!existsSync(hooksFilePath)) {
@@ -279,11 +342,13 @@ class EncryptionUtils {
 export class SoftDeliveryServer extends BunServerWrapper {
   private hostManager: SoftDeliveryHost;
   private fileManager: DeliveryFile;
+  private tokenManager: TempAuthTokensManager;
 
   constructor(private config: SoftDeliveryServerConfig) {
     super({ hostname: config.hostname, port: config.port });
     this.hostManager = new SoftDeliveryHost();
     this.fileManager = new DeliveryFile();
+    this.tokenManager = new TempAuthTokensManager();
   }
 
   private authenticateHost(req: Request): {
@@ -337,7 +402,9 @@ export class SoftDeliveryServer extends BunServerWrapper {
         const file = formData.get("file") as File;
         const filename = (formData.get("filename") as string) || file?.name;
         const isDirectory = formData.get("isDirectory") === "true";
-        const share = formData.get("share") === "true";
+        // share defaults to true; pass share=false explicitly to opt out
+        const share = formData.get("share") !== "false";
+        const createLink = formData.get("createLink") === "true";
         const hooksJson = formData.get("hooks") as string | null;
 
         if (!file) {
@@ -361,24 +428,37 @@ export class SoftDeliveryServer extends BunServerWrapper {
 
         let metadata: FileMetadata;
         if (share) {
-          metadata = this.fileManager.saveFileForHost(targetHostId, filename, decryptedData, hooks);
+          metadata = this.fileManager.saveSharedFile(targetHostId, filename, decryptedData, hooks);
           console.log(
             `[PUSH] Shared ${isDirectory ? "directory" : "file"} for ${targetHostname}: ${filename} (${metadata.size} bytes) - available for pull`,
           );
         } else {
-          metadata = this.fileManager.saveFileFromHost(targetHostId, filename, decryptedData, hooks);
+          metadata = this.fileManager.saveReceivedFile(targetHostId, filename, decryptedData, hooks);
           console.log(
-            `[PUSH] Received ${isDirectory ? "directory" : "file"} for ${targetHostname}: ${filename} (${metadata.size} bytes)`,
+            `[PUSH] Received ${isDirectory ? "directory" : "file"} from ${targetHostname}: ${filename} (${metadata.size} bytes) - stored only`,
           );
         }
 
         metadata.isDirectory = isDirectory;
 
-        return this.successResponse({
+        const responseData: Record<string, unknown> = {
           message: `${isDirectory ? "Directory" : "File"} ${share ? "shared" : "received"} successfully`,
           metadata,
           shared: share,
-        });
+        };
+
+        if (createLink && share) {
+          const token = this.tokenManager.createToken(
+            targetHostId,
+            metadata.storedName,
+            metadata.originalName,
+          );
+          responseData.linkToken = token;
+          responseData.linkPath = `/link?token=${token}`;
+          console.log(`[PUSH] Created download link for ${filename}: token=${token}`);
+        }
+
+        return this.successResponse(responseData);
       } catch (error) {
         console.error("[PUSH] Error:", error);
         return this.errorResponse("Failed to process file", 500);
@@ -495,20 +575,107 @@ export class SoftDeliveryServer extends BunServerWrapper {
     });
 
     this.maxRequestBodySize(500 * 1024 * 1024); // 500MB
+
+    this.get("/link", async (req: Request) => {
+      try {
+        const url = new URL(req.url);
+        const token = url.searchParams.get("token");
+
+        if (!token) {
+          return this.errorResponse("Token is required", 400);
+        }
+
+        const tokenData = this.tokenManager.getToken(token);
+        if (!tokenData) {
+          return this.errorResponse("Invalid token", 404);
+        }
+
+        if (tokenData.revoked) {
+          return this.errorResponse("Link has been revoked", 403);
+        }
+
+        const host = this.hostManager.getHost(tokenData.hostId);
+        if (!host) {
+          return this.errorResponse("Host not found", 404);
+        }
+
+        const encryptedFileData = this.fileManager.getFileByStoredName(tokenData.storedName, "for");
+        if (!encryptedFileData) {
+          return this.errorResponse("File not found", 404);
+        }
+
+        const fileData = EncryptionUtils.decrypt(encryptedFileData, host.key);
+
+        console.log(`[LINK] Token download: ${tokenData.originalName} (${fileData.length} bytes)`);
+
+        return new Response(fileData, {
+          status: 200,
+          headers: {
+            "Content-Type": "application/octet-stream",
+            "Content-Disposition": `attachment; filename="${tokenData.originalName}"`,
+            "X-Original-Name": tokenData.originalName,
+          },
+        });
+      } catch (error) {
+        console.error("[LINK] Error:", error);
+        return this.errorResponse("Failed to retrieve file", 500);
+      }
+    });
+
+    this.post("/link/revoke", async (req: Request) => {
+      const auth = this.authenticateHost(req);
+      if (!auth.authenticated || !auth.hostId) {
+        return this.errorResponse("Authentication failed", 401);
+      }
+
+      try {
+        const body = (await req.json()) as RevokeRequestBody;
+        const { token } = body;
+
+        if (!token) {
+          return this.errorResponse("Token is required");
+        }
+
+        const tokenData = this.tokenManager.getToken(token);
+        if (!tokenData) {
+          return this.errorResponse("Token not found", 404);
+        }
+
+        if (tokenData.hostId !== auth.hostId) {
+          return this.errorResponse("Access denied", 403);
+        }
+
+        const revoked = this.tokenManager.revokeToken(token);
+        if (!revoked) {
+          return this.errorResponse("Failed to revoke token", 500);
+        }
+
+        console.log(`[LINK/REVOKE] Token revoked by ${auth.host?.hostname}: ${token}`);
+
+        return this.successResponse({ message: "Link revoked successfully", token });
+      } catch (error) {
+        console.error("[LINK/REVOKE] Error:", error);
+        return this.errorResponse("Failed to revoke link", 500);
+      }
+    });
+
     this.start();
   }
 
   public run(): void {
     console.log(`Soft Delivery Server is running on port ${this.config.port}`);
-    console.log("Host management: storage/delivery_hosts.json");
-    console.log("Files from hosts: storage/files_from_hosts/");
-    console.log("Files for hosts: storage/files_for_hosts/");
+    console.log("Host management:           storage/delivery_hosts.json");
+    console.log("Shared files (pullable):   storage/files_shared/");
+    console.log("Received files (no pull):  storage/files_received/");
+    console.log("Link tokens:               storage/host_temp_auth_tokens.json");
     console.log("\nEndpoints:");
-    console.log("  POST /push     - Host uploads encrypted file/directory (zip)");
-    console.log("  POST /pull     - Git-style: get list of new files to download");
-    console.log("  POST /download - Download specific file by stored name");
-    console.log("  POST /files    - List files for host");
-    console.log("  GET  /status   - Server status\n");
+    console.log("  POST /push              - Upload file/directory (shared by default)");
+    console.log("  POST /pull              - Get list of new shared files to download");
+    console.log("  POST /download          - Download specific file by stored name");
+    console.log("  POST /files             - List files for host");
+    console.log("  GET  /link?token=<tok>  - Download file by permanent link token");
+    console.log("  POST /link/revoke       - Revoke a permanent link token");
+    console.log("  GET  /status            - Server status\n");
 
     void this.runServer();
   }
