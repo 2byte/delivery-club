@@ -454,7 +454,7 @@ export class ServerScaffoldGenerator {
           cli: "bun deliverierCli.ts",
         },
         dependencies: {
-          "@delivery-club/server": "npm:jsr:@delivery-club/server",
+          "@delivery-club/server": "npm:@jsr/delivery-club__server",
         },
       },
       null,

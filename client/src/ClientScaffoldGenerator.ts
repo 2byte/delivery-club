@@ -200,7 +200,7 @@ export class ClientScaffoldGenerator {
   private getTsPackageJsonTemplate(): string {
     const pkg = {
       dependencies: {
-        "@delivery-club/client": "npm:jsr:@delivery-club/client",
+        "@delivery-club/client": "npm:@jsr/delivery-club__client",
       },
     };
     return JSON.stringify(pkg, null, 2) + "\n";
